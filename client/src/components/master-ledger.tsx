@@ -10,29 +10,73 @@ import { Badge } from "@/components/ui/badge";
 import { Trade } from "@shared/schema";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
-import React, { useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import React, { useState, useMemo } from "react";
+import { ChevronDown, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 
 interface MasterLedgerProps {
   trades: Trade[];
   onTradeClick?: (trade: Trade) => void;
 }
 
+type SortConfig = {
+  key: keyof Trade | 'pnl';
+  direction: 'asc' | 'desc';
+} | null;
+
 export function MasterLedger({ trades, onTradeClick }: MasterLedgerProps) {
   const [expandedTrades, setExpandedTrades] = useState<Record<number, boolean>>({});
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'entryDate', direction: 'desc' });
 
   const toggleExpand = (id: number, e: React.MouseEvent) => {
     e.stopPropagation();
     setExpandedTrades(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
+  const handleSort = (key: keyof Trade | 'pnl') => {
+    setSortConfig((current) => {
+      if (current?.key === key) {
+        if (current.direction === 'desc') return { key, direction: 'asc' };
+        return null;
+      }
+      return { key, direction: 'desc' };
+    });
+  };
+
   // Group trades by parentTradeId
   const mainTrades = trades.filter(t => !t.parentTradeId);
   const childTrades = trades.filter(t => t.parentTradeId);
 
-  const sortedMainTrades = [...mainTrades].sort((a, b) => 
-    new Date(b.entryDate).getTime() - new Date(a.entryDate).getTime()
-  );
+  const processedTrades = useMemo(() => {
+    let result = mainTrades.map(trade => {
+      const children = childTrades.filter(t => t.parentTradeId === trade.id);
+      const totalPnL = children.reduce((acc, child) => {
+        const pnl = (Number(child.sellPrice) - Number(child.buyPrice)) * Number(child.quantity) - Number(child.fees || 0);
+        return acc + pnl;
+      }, 0);
+      return { ...trade, pnl: totalPnL };
+    });
+
+    if (sortConfig) {
+      result.sort((a, b) => {
+        const aVal = a[sortConfig.key];
+        const bVal = b[sortConfig.key];
+        
+        if (aVal === bVal) return 0;
+        if (aVal === null || aVal === undefined) return 1;
+        if (bVal === null || bVal === undefined) return -1;
+
+        const comparison = aVal < bVal ? -1 : 1;
+        return sortConfig.direction === 'asc' ? comparison : -comparison;
+      });
+    }
+
+    return result;
+  }, [mainTrades, childTrades, sortConfig]);
+
+  const SortIcon = ({ column }: { column: keyof Trade | 'pnl' }) => {
+    if (sortConfig?.key !== column) return <ArrowUpDown className="ml-1 h-3 w-3 inline-block opacity-50" />;
+    return sortConfig.direction === 'asc' ? <ArrowUp className="ml-1 h-3 w-3 inline-block" /> : <ArrowDown className="ml-1 h-3 w-3 inline-block" />;
+  };
 
   return (
     <div className="rounded-xl border border-border bg-card/50 backdrop-blur-xl overflow-hidden shadow-sm">
@@ -47,35 +91,61 @@ export function MasterLedger({ trades, onTradeClick }: MasterLedgerProps) {
           <TableHeader>
             <TableRow className="hover:bg-transparent border-border bg-muted/5">
               <TableHead className="w-[40px]"></TableHead>
-              <TableHead className="py-2 text-[10px] uppercase font-bold tracking-tighter">Timestamp</TableHead>
-              <TableHead className="py-2 text-[10px] uppercase font-bold tracking-tighter">Ticker</TableHead>
+              <TableHead 
+                className="py-2 text-[10px] uppercase font-bold tracking-tighter cursor-pointer hover:text-primary transition-colors"
+                onClick={() => handleSort('entryDate')}
+              >
+                Timestamp <SortIcon column="entryDate" />
+              </TableHead>
+              <TableHead 
+                className="py-2 text-[10px] uppercase font-bold tracking-tighter cursor-pointer hover:text-primary transition-colors"
+                onClick={() => handleSort('ticker')}
+              >
+                Ticker <SortIcon column="ticker" />
+              </TableHead>
               <TableHead className="py-2 text-[10px] uppercase font-bold tracking-tighter">Side</TableHead>
-              <TableHead className="py-2 text-[10px] uppercase font-bold tracking-tighter text-right">Entry Price</TableHead>
-              <TableHead className="py-2 text-[10px] uppercase font-bold tracking-tighter text-right">Qty</TableHead>
-              <TableHead className="py-2 text-[10px] uppercase font-bold tracking-tighter">Status</TableHead>
-              <TableHead className="py-2 text-[10px] uppercase font-bold tracking-tighter text-right">Net P&L</TableHead>
+              <TableHead 
+                className="py-2 text-[10px] uppercase font-bold tracking-tighter text-right cursor-pointer hover:text-primary transition-colors"
+                onClick={() => handleSort('buyPrice')}
+              >
+                Entry Price <SortIcon column="buyPrice" />
+              </TableHead>
+              <TableHead 
+                className="py-2 text-[10px] uppercase font-bold tracking-tighter text-right cursor-pointer hover:text-primary transition-colors"
+                onClick={() => handleSort('quantity')}
+              >
+                Qty <SortIcon column="quantity" />
+              </TableHead>
+              <TableHead 
+                className="py-2 text-[10px] uppercase font-bold tracking-tighter cursor-pointer hover:text-primary transition-colors"
+                onClick={() => handleSort('status')}
+              >
+                Status <SortIcon column="status" />
+              </TableHead>
+              <TableHead 
+                className="py-2 text-[10px] uppercase font-bold tracking-tighter text-right cursor-pointer hover:text-primary transition-colors"
+                onClick={() => handleSort('pnl')}
+              >
+                Net P&L <SortIcon column="pnl" />
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {sortedMainTrades.map((mainTrade) => {
+            {processedTrades.map((mainTrade) => {
               const children = childTrades.filter(t => t.parentTradeId === mainTrade.id);
               const isExpanded = expandedTrades[mainTrade.id];
               const hasChildren = children.length > 0;
-
-              // Calculate total realized P&L for the main row
-              const totalPnL = children.reduce((acc, child) => {
-                const pnl = (Number(child.sellPrice) - Number(child.buyPrice)) * Number(child.quantity) - Number(child.fees || 0);
-                return acc + pnl;
-              }, 0);
+              const totalPnL = mainTrade.pnl;
 
               const isWin = totalPnL > 0;
               const isLong = mainTrade.side === "LONG" || !mainTrade.side;
+              const isOpen = mainTrade.status === 'OPEN';
               
               return (
                 <React.Fragment key={mainTrade.id}>
                   <TableRow 
                     className="border-border hover:bg-muted/30 transition-colors group cursor-pointer"
-                    onClick={() => onTradeClick?.(mainTrade)}
+                    onClick={() => onTradeClick?.(mainTrade as unknown as Trade)}
                   >
                     <TableCell className="p-2">
                       {hasChildren && (
@@ -113,12 +183,17 @@ export function MasterLedger({ trades, onTradeClick }: MasterLedgerProps) {
                       {Number(mainTrade.quantity).toLocaleString()}
                     </TableCell>
                     <TableCell className="py-2">
-                      <span className={cn(
-                        "text-[10px] font-bold",
-                        mainTrade.status === 'OPEN' ? "text-primary" : "text-muted-foreground"
-                      )}>
-                        {mainTrade.status}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        {isOpen && (
+                          <div className="h-1.5 w-1.5 rounded-full bg-profit animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
+                        )}
+                        <span className={cn(
+                          "text-[10px] font-bold uppercase tracking-tight",
+                          isOpen ? "text-profit" : "text-muted-foreground"
+                        )}>
+                          {mainTrade.status}
+                        </span>
+                      </div>
                     </TableCell>
                     <TableCell className="text-right font-mono text-xs font-bold py-2">
                       {hasChildren ? (

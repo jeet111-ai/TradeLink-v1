@@ -43,7 +43,6 @@ export default function ActiveJournal() {
   const [pnlFilter, setPnlFilter] = useState("ALL");
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<"table" | "spreadsheet">("spreadsheet");
 
   const handleTradeClick = (trade: Trade) => {
     setSelectedTrade(trade);
@@ -99,79 +98,14 @@ export default function ActiveJournal() {
   const grossLoss = Math.abs(pnlData.filter(d => d.pnl < 0).reduce((a, b) => a + b.pnl, 0));
   const profitFactor = grossLoss === 0 ? (grossProfit > 0 ? 99 : 0) : grossProfit / grossLoss;
 
-  // Calculate derived values for spreadsheet view
-  const calculateTradeMetrics = (trade: Trade, index: number, runningTotal: number) => {
-    const entryPrice = Number(trade.buyPrice);
-    const exitPrice = trade.sellPrice ? Number(trade.sellPrice) : null;
-    const quantity = Number(trade.quantity);
-    const stopLoss = trade.stopLoss ? Number(trade.stopLoss) : null;
-    const fees = Number(trade.fees || 0);
-    
-    // SL% = (Entry - SL) / Entry * 100
-    const slPercent = stopLoss && entryPrice ? ((entryPrice - stopLoss) / entryPrice) * 100 : null;
-    
-    // RPT (Risk Per Trade) = (Entry - SL) * Quantity
-    const rpt = stopLoss ? Math.abs((entryPrice - stopLoss) * quantity) : null;
-    
-    // Gross Profit/Loss
-    const grossPnl = exitPrice ? (exitPrice - entryPrice) * quantity : null;
-    
-    // Net Profit = Gross P&L - Fees
-    const netProfit = grossPnl !== null ? grossPnl - fees : null;
-    
-    // Trade Gain % = (Net Profit / Entry Value) * 100
-    const entryValue = entryPrice * quantity;
-    const tradeGainPercent = netProfit !== null && entryValue > 0 ? (netProfit / entryValue) * 100 : null;
-    
-    // R Multiple = Net Profit / RPT
-    const rMultiple = netProfit !== null && rpt && rpt > 0 ? netProfit / rpt : null;
-    
-    // Holding Days
-    const entryDate = new Date(trade.entryDate);
-    const exitDate = trade.exitDate ? new Date(trade.exitDate) : null;
-    const holdingDays = exitDate ? differenceInDays(exitDate, entryDate) : null;
-    
-    // Account Value (running total)
-    const accountValue = runningTotal + (netProfit || 0);
-    
-    return {
-      no: index + 1,
-      entryDate: format(entryDate, 'dd/MM/yyyy'),
-      strategy: trade.strategy || '-',
-      stock: trade.ticker,
-      qty: quantity,
-      entry: entryPrice,
-      sl: stopLoss,
-      slPercent,
-      rpt,
-      exitDate: exitDate ? format(exitDate, 'dd/MM/yyyy') : '-',
-      exitQty: trade.status === 'CLOSED' ? quantity : null,
-      exitPrice,
-      tradeGainPercent,
-      rMultiple,
-      holdingDays,
-      grossProfit: grossPnl,
-      brokerage: fees,
-      netProfit,
-      accountValue,
-      notes: trade.notes || '-',
-      status: trade.status,
-      type: trade.type,
-      trade,
-    };
-  };
-
-  // Calculate metrics for all filtered trades
-  let runningAccountValue = 0; // Starting account value
-  const spreadsheetData = filteredTrades
-    .sort((a, b) => new Date(a.entryDate).getTime() - new Date(b.entryDate).getTime())
-    .map((trade, index) => {
-      const metrics = calculateTradeMetrics(trade, index, runningAccountValue);
-      if (metrics.netProfit !== null) {
-        runningAccountValue += metrics.netProfit;
-      }
-      return { ...metrics, accountValue: runningAccountValue };
-    });
+  // Account Value calculation
+  const runningAccountValue = filteredTrades.reduce((acc, t) => {
+    if (t.status === 'CLOSED' && t.sellPrice) {
+      const pnl = (Number(t.sellPrice) - Number(t.buyPrice)) * Number(t.quantity) - Number(t.fees || 0);
+      return acc + pnl;
+    }
+    return acc;
+  }, 0);
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -181,24 +115,6 @@ export default function ActiveJournal() {
           <p className="text-muted-foreground mt-1">Intraday & Futures performance analytics.</p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex bg-muted rounded-lg p-1">
-            <Button 
-              variant={viewMode === "spreadsheet" ? "default" : "ghost"} 
-              size="sm"
-              onClick={() => setViewMode("spreadsheet")}
-              data-testid="button-spreadsheet-view"
-            >
-              Spreadsheet
-            </Button>
-            <Button 
-              variant={viewMode === "table" ? "default" : "ghost"} 
-              size="sm"
-              onClick={() => setViewMode("table")}
-              data-testid="button-table-view"
-            >
-              Cards
-            </Button>
-          </div>
           <TradeDialog defaultType="EQUITY_INTRADAY">
             <Button className="bg-primary hover:bg-primary/90" data-testid="button-log-trade">
               <Plus className="mr-2 h-4 w-4" /> Log Trade

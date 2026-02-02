@@ -14,6 +14,8 @@ import { cn } from "@/lib/utils";
 export function LayoutSidebar() {
   const [location] = useLocation();
 
+  const { logoutMutation } = useAuth();
+
   const navItems = [
     { href: "/", label: "Master Ledger", icon: Table2 },
     { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -66,9 +68,13 @@ export function LayoutSidebar() {
             <Settings className="h-4 w-4" />
             Settings
           </button>
-          <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground">
+          <button 
+            onClick={() => logoutMutation.mutate()}
+            disabled={logoutMutation.isPending}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-50"
+          >
             <LogOut className="h-4 w-4" />
-            Sign Out
+            Log Out
           </button>
         </div>
       </div>
