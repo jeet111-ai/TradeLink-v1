@@ -10,6 +10,7 @@ import {
   Activity
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/use-auth";
 
 export function LayoutSidebar() {
   const [location] = useLocation();
