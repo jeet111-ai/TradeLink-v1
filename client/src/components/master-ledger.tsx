@@ -86,7 +86,7 @@ export function MasterLedger({ trades, onTradeClick }: MasterLedgerProps) {
           buyPrice: buyPriceIdx !== -1 ? cols[buyPriceIdx] : '0',
           quantity: qtyIdx !== -1 ? cols[qtyIdx] : '0',
           type: typeIdx !== -1 ? cols[typeIdx].toUpperCase() : 'EQUITY_INTRADAY',
-          side: sideIdx !== -1 ? (cols[sideIdx].toUpperCase().includes('SELL') || cols[sideIdx].toUpperCase().includes('SHORT') ? 'SHORT' : 'LONG') : 'LONG',
+          side: (sideIdx !== -1 ? (cols[sideIdx].toUpperCase().includes('SELL') || cols[sideIdx].toUpperCase().includes('SHORT') ? 'SHORT' : 'LONG') : 'LONG') as "LONG" | "SHORT",
           status: 'OPEN' as const,
           entryDate: new Date(),
         };
@@ -166,6 +166,7 @@ export function MasterLedger({ trades, onTradeClick }: MasterLedgerProps) {
           <Badge variant="outline" className="font-mono text-[10px] uppercase">
             Grouped Execution Logs
           </Badge>
+          <div className="h-1.5 w-1.5 rounded-full bg-profit animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]" title="Connected to Real-time Engine" />
         </div>
       </div>
       <div className="overflow-x-auto">

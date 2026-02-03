@@ -10,6 +10,7 @@ import ActiveJournal from "@/pages/active-journal";
 import Portfolio from "@/pages/portfolio";
 import Analytics from "@/pages/analytics";
 import MasterLedgerPage from "@/pages/master-ledger";
+import SettingsPage from "@/pages/settings/index";
 import { AuthProvider } from "@/hooks/use-auth";
 import { ProtectedRoute } from "@/lib/protected-route";
 import AuthPage from "@/pages/auth-page";
@@ -43,6 +44,7 @@ function Router() {
             <ProtectedRoute path="/journal" component={ActiveJournal} />
             <ProtectedRoute path="/portfolio" component={Portfolio} />
             <ProtectedRoute path="/analytics" component={Analytics} />
+            <ProtectedRoute path="/settings" component={SettingsPage} />
             <Route component={NotFound} />
           </Switch>
         </div>

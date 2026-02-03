@@ -65,10 +65,17 @@ export function LayoutSidebar() {
             <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 font-bold mb-1">Branding</p>
             <p className="text-xs text-muted-foreground italic">Designed by Jeet</p>
           </div>
-          <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground">
-            <Settings className="h-4 w-4" />
-            Settings
-          </button>
+          <Link href="/settings">
+            <div className={cn(
+              "flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200",
+              location === "/settings" 
+                ? "bg-primary/10 text-primary shadow-sm shadow-primary/5" 
+                : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+            )}>
+              <Settings className="h-4 w-4" />
+              Settings
+            </div>
+          </Link>
           <button 
             onClick={() => logoutMutation.mutate()}
             disabled={logoutMutation.isPending}
