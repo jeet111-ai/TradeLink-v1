@@ -302,7 +302,7 @@ export default function ActiveJournal() {
                             {row.tradeGainPercent !== null ? `${row.tradeGainPercent.toFixed(2)}%` : '-'}
                           </TableCell>
                           <TableCell className={`text-right font-mono font-medium ${isProfitable ? 'text-profit' : isLoss ? 'text-loss' : ''}`}>
-                            {row.rMultiple !== null ? `${row.rMultiple.toFixed(2)}R` : '-'}
+                            {row.rMultiple !== null ? `${Number(row.rMultiple).toFixed(2)}R` : '-'}
                           </TableCell>
                           <TableCell className="text-right font-mono">
                             {row.holdingDays !== null ? row.holdingDays : '-'}
