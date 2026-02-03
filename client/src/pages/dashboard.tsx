@@ -71,7 +71,7 @@ export default function Dashboard() {
           <div className="absolute -inset-1 bg-gradient-to-r from-primary to-blue-600 rounded-lg blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200"></div>
           <div className="relative px-4 py-2 bg-card rounded-lg border border-border">
             <h1 className="text-3xl font-bold tracking-tight text-foreground">
-              Welcome back, <span className="bg-gradient-to-r from-primary to-blue-400 bg-clip-text text-transparent">Ommi</span>
+              Welcome back, <span className="bg-gradient-to-r from-primary to-blue-400 bg-clip-text text-transparent">Trader</span>
             </h1>
             <p className="text-muted-foreground mt-1 flex items-center gap-2">
               <Activity className="h-3 w-3 text-primary animate-pulse" />
