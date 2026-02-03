@@ -43,6 +43,7 @@ export default function ActiveJournal() {
   const [pnlFilter, setPnlFilter] = useState("ALL");
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<"table" | "spreadsheet">("spreadsheet");
 
   const handleTradeClick = (trade: Trade) => {
     setSelectedTrade(trade);
@@ -53,17 +54,17 @@ export default function ActiveJournal() {
 
   // Filter logic
   const activeTrades = (trades || []).filter(t => t.type !== "LONG_TERM_HOLDING");
-  
+
   const filteredTrades = activeTrades.filter(t => {
     const matchesSearch = t.ticker.toLowerCase().includes(search.toLowerCase());
     const matchesStatus = statusFilter === "ALL" || t.status === statusFilter;
     const matchesType = typeFilter === "ALL" || t.type === typeFilter;
-    
+
     // Date Range Filter
     const entryDate = new Date(t.entryDate);
-    const matchesDate = (!dateRange.from || entryDate >= dateRange.from) && 
+    const matchesDate = (!dateRange.from || entryDate >= dateRange.from) &&
                        (!dateRange.to || entryDate <= dateRange.to);
-    
+
     // P&L Filter
     let matchesPnl = true;
     if (pnlFilter !== "ALL" && t.status === 'CLOSED') {
@@ -71,8 +72,42 @@ export default function ActiveJournal() {
       if (pnlFilter === "PROFIT") matchesPnl = pnl > 0;
       if (pnlFilter === "LOSS") matchesPnl = pnl < 0;
     }
-    
+
     return matchesSearch && matchesStatus && matchesType && matchesDate && matchesPnl;
+  });
+
+  const spreadsheetData = filteredTrades.map((t, index) => {
+    const pnl = t.status === 'CLOSED' && t.sellPrice
+      ? (Number(t.sellPrice) - Number(t.buyPrice)) * Number(t.quantity) - Number(t.fees || 0)
+      : null;
+    const gainPercent = t.status === 'CLOSED' && t.sellPrice
+      ? ((Number(t.sellPrice) - Number(t.buyPrice)) / Number(t.buyPrice)) * 100
+      : null;
+
+    return {
+      no: index + 1,
+      entryDate: format(new Date(t.entryDate), 'MMM dd, yyyy'),
+      strategy: t.strategy || 'N/A',
+      stock: t.ticker,
+      qty: Number(t.quantity),
+      entry: Number(t.buyPrice),
+      sl: t.stopLoss ? Number(t.stopLoss) : null,
+      slPercent: t.stopLoss ? ((Number(t.stopLoss) - Number(t.buyPrice)) / Number(t.buyPrice)) * 100 : null,
+      rpt: t.stopLoss ? (Number(t.buyPrice) - Number(t.stopLoss)) * Number(t.quantity) : null,
+      exitDate: t.exitDate ? format(new Date(t.exitDate), 'MMM dd, yyyy') : '-',
+      exitQty: t.status === 'CLOSED' ? Number(t.quantity) : null,
+      exitPrice: t.sellPrice ? Number(t.sellPrice) : null,
+      tradeGainPercent: gainPercent,
+      rMultiple: null, // Logic could be added if needed
+      holdingDays: t.exitDate ? differenceInDays(new Date(t.exitDate), new Date(t.entryDate)) : null,
+      grossProfit: pnl,
+      brokerage: Number(t.fees || 0),
+      netProfit: pnl,
+      accountValue: 0, // Mock or calculated value
+      notes: t.notes || '',
+      status: t.status,
+      trade: t
+    };
   });
 
   const availableTypes = Array.from(new Set(activeTrades.map(t => t.type)));
