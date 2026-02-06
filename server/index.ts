@@ -91,8 +91,8 @@ app.use((req, res, next) => {
   // It is the only port that is not firewalled.
   // --- WINDOWS SAFE STARTUP CODE ---
 const PORT = 3000; // Changed from 5000 to 3000
-const HOST = "127.0.0.1"; // Changed from 0.0.0.0 to localhost
-
+//const HOST = "127.0.0.1"; // Changed from 0.0.0.0 to localhost
+const HOST = "0.0.0.0";
 httpServer.listen(PORT, HOST, () => {
   log(`serving on http://${HOST}:${PORT}`);
 });
