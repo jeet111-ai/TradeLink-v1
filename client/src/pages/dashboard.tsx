@@ -1,3 +1,4 @@
+import { WelcomeOverlay } from "@/components/welcome-overlay";
 import { useState } from "react";
 import { useTrades, useDeleteTrade } from "@/hooks/use-trades";
 import { StatCard } from "@/components/stat-card";
@@ -62,6 +63,9 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
+      {/* WELCOME OVERLAY ADDED HERE */}
+      <WelcomeOverlay />
+
       <div className="-mx-8 -mt-8 mb-8 border-b border-border/50">
         <MarketTicker />
       </div>

@@ -1,9 +1,10 @@
 import { useAuth } from "@/hooks/use-auth";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { insertUserSchema, InsertUser } from "@shared/schema";
+import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -25,8 +26,18 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Activity } from "lucide-react";
 
 export default function AuthPage() {
-  const { user, loginMutation, registerMutation } = useAuth();
+  const {
+    user,
+    loginMutation,
+    registerMutation,
+    requestPasswordResetMutation,
+    resetPasswordMutation,
+  } = useAuth();
   const [, setLocation] = useLocation();
+  const [issuedToken, setIssuedToken] = useState<string | null>(null);
+  const [tokenCopied, setTokenCopied] = useState(false);
+  const isPasswordResetEnabled =
+    import.meta.env.VITE_PASSWORD_RESET_ENABLED === "true";
 
   useEffect(() => {
     if (user) {
@@ -36,13 +47,55 @@ export default function AuthPage() {
 
   const loginForm = useForm<InsertUser>({
     resolver: zodResolver(insertUserSchema),
-    defaultValues: { username: "", password: "" },
+    defaultValues: { email: "", password: "" },
   });
 
   const registerForm = useForm<InsertUser>({
     resolver: zodResolver(insertUserSchema),
-    defaultValues: { username: "", password: "" },
+    defaultValues: { email: "", password: "" },
   });
+
+  const requestResetSchema = z.object({
+    email: z.string().email("Enter a valid email."),
+  });
+
+  const resetSchema = z.object({
+    email: z.string().email("Enter a valid email."),
+    token: z.string().min(1, "Reset token is required."),
+    newPassword: z.string().min(6, "Password must be at least 6 characters."),
+  });
+
+  const requestResetForm = useForm<z.infer<typeof requestResetSchema>>({
+    resolver: zodResolver(requestResetSchema),
+    defaultValues: { email: "" },
+  });
+
+  const resetForm = useForm<z.infer<typeof resetSchema>>({
+    resolver: zodResolver(resetSchema),
+    defaultValues: { email: "", token: "", newPassword: "" },
+  });
+
+  const handleRequestReset = async (data: z.infer<typeof requestResetSchema>) => {
+    setTokenCopied(false);
+    try {
+      const result = await requestPasswordResetMutation.mutateAsync(data);
+      if (result?.resetToken) {
+        setIssuedToken(result.resetToken);
+        resetForm.setValue("email", data.email);
+        resetForm.setValue("token", result.resetToken);
+      } else {
+        setIssuedToken(null);
+      }
+    } catch {
+      setIssuedToken(null);
+    }
+  };
+
+  const handleCopyToken = async () => {
+    if (!issuedToken) return;
+    await navigator.clipboard.writeText(issuedToken);
+    setTokenCopied(true);
+  };
 
   return (
     <div className="min-h-screen grid lg:grid-cols-2">
@@ -51,14 +104,17 @@ export default function AuthPage() {
           <CardHeader>
             <CardTitle>Welcome Back</CardTitle>
             <CardDescription>
-              Sign in to your trading journal or create an account
+              Sign in to your professional trading journal
             </CardDescription>
           </CardHeader>
           <CardContent>
             <Tabs defaultValue="login">
-              <TabsList className="grid w-full grid-cols-2 mb-4">
+              <TabsList className={`grid w-full ${isPasswordResetEnabled ? "grid-cols-3" : "grid-cols-2"} mb-4`}>
                 <TabsTrigger value="login">Login</TabsTrigger>
                 <TabsTrigger value="register">Register</TabsTrigger>
+                {isPasswordResetEnabled && (
+                  <TabsTrigger value="reset">Reset</TabsTrigger>
+                )}
               </TabsList>
 
               <TabsContent value="login">
@@ -71,12 +127,12 @@ export default function AuthPage() {
                   >
                     <FormField
                       control={loginForm.control}
-                      name="username"
+                      name="email"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Username</FormLabel>
+                          <FormLabel>Email</FormLabel>
                           <FormControl>
-                            <Input {...field} />
+                            <Input placeholder="trader@example.com" {...field} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -116,12 +172,12 @@ export default function AuthPage() {
                   >
                     <FormField
                       control={registerForm.control}
-                      name="username"
+                      name="email"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Username</FormLabel>
+                          <FormLabel>Email</FormLabel>
                           <FormControl>
-                            <Input {...field} />
+                            <Input placeholder="trader@example.com" {...field} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -145,11 +201,119 @@ export default function AuthPage() {
                       className="w-full"
                       disabled={registerMutation.isPending}
                     >
-                      Register
+                      Register Account
                     </Button>
                   </form>
                 </Form>
               </TabsContent>
+
+              {isPasswordResetEnabled && (
+                <TabsContent value="reset">
+                <div className="space-y-6">
+                  <Form {...requestResetForm}>
+                    <form
+                      onSubmit={requestResetForm.handleSubmit(handleRequestReset)}
+                      className="space-y-3"
+                    >
+                      <FormField
+                        control={requestResetForm.control}
+                        name="email"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Email</FormLabel>
+                            <FormControl>
+                              <Input placeholder="trader@example.com" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <Button
+                        type="submit"
+                        variant="outline"
+                        className="w-full"
+                        disabled={requestPasswordResetMutation.isPending}
+                      >
+                        Request Reset Token
+                      </Button>
+                    </form>
+                  </Form>
+
+                  {issuedToken && (
+                    <div className="rounded-lg border border-border bg-muted/40 p-3 space-y-2">
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                        Reset Token (Dev Only)
+                      </div>
+                      <div className="flex gap-2">
+                        <Input readOnly value={issuedToken} />
+                        <Button type="button" variant="secondary" onClick={handleCopyToken}>
+                          {tokenCopied ? "Copied" : "Copy"}
+                        </Button>
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Token expires in 1 hour.
+                      </div>
+                    </div>
+                  )}
+
+                  <Form {...resetForm}>
+                    <form
+                      onSubmit={resetForm.handleSubmit((data) =>
+                        resetPasswordMutation.mutate(data)
+                      )}
+                      className="space-y-3"
+                    >
+                      <FormField
+                        control={resetForm.control}
+                        name="email"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Email</FormLabel>
+                            <FormControl>
+                              <Input placeholder="trader@example.com" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={resetForm.control}
+                        name="token"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Reset Token</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Paste token" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={resetForm.control}
+                        name="newPassword"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>New Password</FormLabel>
+                            <FormControl>
+                              <Input type="password" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <Button
+                        type="submit"
+                        className="w-full"
+                        disabled={resetPasswordMutation.isPending}
+                      >
+                        Set New Password
+                      </Button>
+                    </form>
+                  </Form>
+                </div>
+              </TabsContent>
+              )}
             </Tabs>
           </CardContent>
         </Card>

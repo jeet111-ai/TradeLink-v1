@@ -11,6 +11,9 @@ type AuthContextType = {
   loginMutation: any;
   logoutMutation: any;
   registerMutation: any;
+  requestPasswordResetMutation: any;
+  resetPasswordMutation: any;
+  changePasswordMutation: any;
 };
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -60,6 +63,66 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
   });
 
+  const requestPasswordResetMutation = useMutation({
+    mutationFn: async (payload: { email: string }) => {
+      const res = await apiRequest("POST", "/api/password/forgot", payload);
+      return await res.json();
+    },
+    onSuccess: (data: { message: string; resetToken?: string }) => {
+      toast({
+        title: "Reset requested",
+        description: data.message,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Reset request failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const resetPasswordMutation = useMutation({
+    mutationFn: async (payload: { email: string; token: string; newPassword: string }) => {
+      const res = await apiRequest("POST", "/api/password/reset", payload);
+      return await res.json();
+    },
+    onSuccess: (data: { message: string }) => {
+      toast({
+        title: "Password reset",
+        description: data.message,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Password reset failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const changePasswordMutation = useMutation({
+    mutationFn: async (payload: { currentPassword: string; newPassword: string }) => {
+      const res = await apiRequest("POST", "/api/password/change", payload);
+      return await res.json();
+    },
+    onSuccess: (data: { message: string }) => {
+      toast({
+        title: "Password updated",
+        description: data.message,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Password update failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const logoutMutation = useMutation({
     mutationFn: async () => {
       await apiRequest("POST", "/api/logout");
@@ -85,6 +148,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loginMutation,
         logoutMutation,
         registerMutation,
+        requestPasswordResetMutation,
+        resetPasswordMutation,
+        changePasswordMutation,
       }}
     >
       {children}

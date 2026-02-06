@@ -42,7 +42,8 @@ export function MasterLedger({ trades, onTradeClick }: MasterLedgerProps) {
     setSortConfig((current) => {
       if (current?.key === key) {
         if (current.direction === 'desc') return { key, direction: 'asc' };
-        return null;
+        // Default back to desc if clicked again (cycle: desc -> asc -> desc)
+        return { key, direction: 'desc' }; 
       }
       return { key, direction: 'desc' };
     });
@@ -75,23 +76,30 @@ export function MasterLedger({ trades, onTradeClick }: MasterLedgerProps) {
       const qtyIdx = findHeader(['quantity', 'qty', 'units', 'vol']);
       const typeIdx = findHeader(['type', 'segment', 'category']);
       const sideIdx = findHeader(['side', 'direction', 'buy/sell']);
+      const dateIdx = findHeader(['date', 'time', 'entry date', 'trade date']);
 
       let importedCount = 0;
       for (const line of data) {
         if (!line.trim()) continue;
         const cols = line.split(',').map(c => c.trim());
 
+        // Basic validation: Must have at least a ticker
+        if (tickerIdx !== -1 && !cols[tickerIdx]) continue;
+
         const trade = {
           ticker: tickerIdx !== -1 ? cols[tickerIdx] : 'UNKNOWN',
-          buyPrice: buyPriceIdx !== -1 ? cols[buyPriceIdx] : '0',
-          quantity: qtyIdx !== -1 ? cols[qtyIdx] : '0',
+          buyPrice: buyPriceIdx !== -1 ? cols[buyPriceIdx].replace(/[^0-9.]/g, '') : '0',
+          quantity: qtyIdx !== -1 ? cols[qtyIdx].replace(/[^0-9.]/g, '') : '0',
           type: typeIdx !== -1 ? cols[typeIdx].toUpperCase() : 'EQUITY_INTRADAY',
           side: (sideIdx !== -1 ? (cols[sideIdx].toUpperCase().includes('SELL') || cols[sideIdx].toUpperCase().includes('SHORT') ? 'SHORT' : 'LONG') : 'LONG') as "LONG" | "SHORT",
           status: 'OPEN' as const,
-          entryDate: new Date(),
+          entryDate: dateIdx !== -1 && cols[dateIdx] ? new Date(cols[dateIdx]) : new Date(),
         };
 
         try {
+          // Skip invalid rows (e.g., empty rows at end of file)
+          if(trade.ticker === 'UNKNOWN' && trade.buyPrice === '0') continue;
+          
           await createTrade.mutateAsync(trade);
           importedCount++;
         } catch (err) {
@@ -110,23 +118,42 @@ export function MasterLedger({ trades, onTradeClick }: MasterLedgerProps) {
   };
 
   // Group trades by parentTradeId
-  const mainTrades = trades.filter(t => !t.parentTradeId);
-  const childTrades = trades.filter(t => t.parentTradeId);
+  const mainTrades = useMemo(() => trades.filter(t => !t.parentTradeId), [trades]);
+  const childTrades = useMemo(() => trades.filter(t => t.parentTradeId), [trades]);
 
   const processedTrades = useMemo(() => {
+    // 1. Calculate P&L for everyone first
     let result = mainTrades.map(trade => {
       const children = childTrades.filter(t => t.parentTradeId === trade.id);
       const totalPnL = children.reduce((acc, child) => {
         const pnl = (Number(child.sellPrice) - Number(child.buyPrice)) * Number(child.quantity) - Number(child.fees || 0);
         return acc + pnl;
       }, 0);
+      // We attach the calculated P&L to the trade object for sorting
       return { ...trade, pnl: totalPnL };
     });
 
+    // 2. Apply Sorting
     if (sortConfig) {
       result.sort((a, b) => {
-        const aVal = a[sortConfig.key];
-        const bVal = b[sortConfig.key];
+        let aVal: any = a[sortConfig.key as keyof typeof a];
+        let bVal: any = b[sortConfig.key as keyof typeof b];
+
+        // Special handling for dates
+        if (sortConfig.key === 'entryDate') {
+            aVal = new Date(aVal).getTime();
+            bVal = new Date(bVal).getTime();
+        } 
+        // Special handling for numbers (prices, qty, pnl)
+        else if (['buyPrice', 'quantity', 'pnl'].includes(sortConfig.key)) {
+            aVal = Number(aVal);
+            bVal = Number(bVal);
+        }
+        // Special handling for strings (ticker, status) - case insensitive
+        else if (typeof aVal === 'string') {
+            aVal = aVal.toLowerCase();
+            bVal = bVal.toLowerCase();
+        }
         
         if (aVal === bVal) return 0;
         if (aVal === null || aVal === undefined) return 1;
@@ -141,12 +168,12 @@ export function MasterLedger({ trades, onTradeClick }: MasterLedgerProps) {
   }, [mainTrades, childTrades, sortConfig]);
 
   const SortIcon = ({ column }: { column: keyof Trade | 'pnl' }) => {
-    if (sortConfig?.key !== column) return <ArrowUpDown className="ml-1 h-3 w-3 inline-block opacity-50" />;
-    return sortConfig.direction === 'asc' ? <ArrowUp className="ml-1 h-3 w-3 inline-block" /> : <ArrowDown className="ml-1 h-3 w-3 inline-block" />;
+    if (sortConfig?.key !== column) return <ArrowUpDown className="ml-1 h-3 w-3 inline-block opacity-30" />;
+    return sortConfig.direction === 'asc' ? <ArrowUp className="ml-1 h-3 w-3 inline-block text-primary" /> : <ArrowDown className="ml-1 h-3 w-3 inline-block text-primary" />;
   };
 
   return (
-    <div className="rounded-xl border border-border bg-card/50 backdrop-blur-xl overflow-hidden shadow-sm">
+    <div className="rounded-xl border border-border bg-card/50 backdrop-blur-xl overflow-hidden shadow-sm animate-in fade-in duration-500">
       <div className="px-6 py-4 border-b border-border flex items-center justify-between bg-muted/20">
         <h3 className="font-semibold text-lg font-display">Master Ledger</h3>
         <div className="flex items-center gap-3">
@@ -175,38 +202,38 @@ export function MasterLedger({ trades, onTradeClick }: MasterLedgerProps) {
             <TableRow className="hover:bg-transparent border-border bg-muted/5">
               <TableHead className="w-[40px]"></TableHead>
               <TableHead 
-                className="py-2 text-[10px] uppercase font-bold tracking-tighter cursor-pointer hover:text-primary transition-colors"
+                className="py-2 text-[10px] uppercase font-bold tracking-tighter cursor-pointer hover:text-primary transition-colors select-none"
                 onClick={() => handleSort('entryDate')}
               >
                 Timestamp <SortIcon column="entryDate" />
               </TableHead>
               <TableHead 
-                className="py-2 text-[10px] uppercase font-bold tracking-tighter cursor-pointer hover:text-primary transition-colors"
+                className="py-2 text-[10px] uppercase font-bold tracking-tighter cursor-pointer hover:text-primary transition-colors select-none"
                 onClick={() => handleSort('ticker')}
               >
                 Ticker <SortIcon column="ticker" />
               </TableHead>
               <TableHead className="py-2 text-[10px] uppercase font-bold tracking-tighter">Side</TableHead>
               <TableHead 
-                className="py-2 text-[10px] uppercase font-bold tracking-tighter text-right cursor-pointer hover:text-primary transition-colors"
+                className="py-2 text-[10px] uppercase font-bold tracking-tighter text-right cursor-pointer hover:text-primary transition-colors select-none"
                 onClick={() => handleSort('buyPrice')}
               >
                 Entry Price <SortIcon column="buyPrice" />
               </TableHead>
               <TableHead 
-                className="py-2 text-[10px] uppercase font-bold tracking-tighter text-right cursor-pointer hover:text-primary transition-colors"
+                className="py-2 text-[10px] uppercase font-bold tracking-tighter text-right cursor-pointer hover:text-primary transition-colors select-none"
                 onClick={() => handleSort('quantity')}
               >
                 Qty <SortIcon column="quantity" />
               </TableHead>
               <TableHead 
-                className="py-2 text-[10px] uppercase font-bold tracking-tighter cursor-pointer hover:text-primary transition-colors"
+                className="py-2 text-[10px] uppercase font-bold tracking-tighter cursor-pointer hover:text-primary transition-colors select-none"
                 onClick={() => handleSort('status')}
               >
                 Status <SortIcon column="status" />
               </TableHead>
               <TableHead 
-                className="py-2 text-[10px] uppercase font-bold tracking-tighter text-right cursor-pointer hover:text-primary transition-colors"
+                className="py-2 text-[10px] uppercase font-bold tracking-tighter text-right cursor-pointer hover:text-primary transition-colors select-none"
                 onClick={() => handleSort('pnl')}
               >
                 Net P&L <SortIcon column="pnl" />

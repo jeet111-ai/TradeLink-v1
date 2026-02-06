@@ -155,7 +155,7 @@ export default function Dashboard() {
                 <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
                   Avg Daily P&L
                 </p>
-                <p className="text-lg font-bold mt-1">₹2,100.00</p>
+                <p className="text-lg font-bold mt-1"></p>
               </div>
             </CardContent>
           </Card>

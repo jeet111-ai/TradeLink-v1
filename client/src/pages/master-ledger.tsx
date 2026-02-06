@@ -1,7 +1,8 @@
 import { useTrades } from "@/hooks/use-trades";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { TradeDialog } from "@/components/trade-dialog";
 import { TradeDetails } from "@/components/trade-details";
+import { SearchFilter } from "@/components/search-filter";
 import { Button } from "@/components/ui/button";
 import { Trade } from "@shared/schema";
 import { 
@@ -12,7 +13,9 @@ import {
   TrendingDown,
   Image as ImageIcon,
   ExternalLink,
-  Filter
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown
 } from "lucide-react";
 import { format, differenceInDays } from "date-fns";
 import {
@@ -25,7 +28,6 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
-import { Input } from "@/components/ui/input";
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 
@@ -37,39 +39,44 @@ interface MarketPrice {
   lastUpdated: Date;
 }
 
+type SortConfig = {
+  key: string;
+  direction: 'asc' | 'desc';
+} | null;
+
 export default function MasterLedgerPage() {
-  const { data: trades, isLoading, refetch } = useTrades();
+  // 1. All Hooks
+  const { data: trades, isLoading } = useTrades();
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const [, setLocation] = useLocation();
   const [marketPrices, setMarketPrices] = useState<Record<string, MarketPrice>>({});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [, setLocation] = useLocation();
+  const [manualCmpByTrade, setManualCmpByTrade] = useState<Record<number, number>>({});
 
-  const handleTradeClick = (trade: Trade) => {
-    setSelectedTrade(trade);
-    setIsDetailsOpen(true);
-  };
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'entryDate', direction: 'desc' });
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [typeFilter, setTypeFilter] = useState("ALL");
+  const [dateRange, setDateRange] = useState<{ from: Date | undefined; to: Date | undefined }>({
+    from: undefined,
+    to: undefined,
+  });
+  const [pnlFilter, setPnlFilter] = useState("ALL");
 
-  // Fetch live market prices for open positions
+  // 2. Effects
   const fetchMarketPrices = async () => {
     if (!trades) return;
-    
     const openTrades = trades.filter(t => t.status === 'OPEN' && t.type !== 'LONG_TERM_HOLDING');
     const uniqueSymbols = Array.from(new Set(openTrades.map(t => t.ticker)));
-    
     if (uniqueSymbols.length === 0) return;
 
     setIsRefreshing(true);
-    
     try {
-      // Using Yahoo Finance API via a proxy (free, delayed data)
       const newPrices: Record<string, MarketPrice> = {};
-      
       for (const symbol of uniqueSymbols) {
         try {
-          // Try fetching from our backend which will proxy to a free API
           const response = await fetch(`/api/market-price/${symbol}`);
           if (response.ok) {
             const data = await response.json();
@@ -85,7 +92,6 @@ export default function MasterLedgerPage() {
           console.log(`Could not fetch price for ${symbol}`);
         }
       }
-      
       setMarketPrices(prev => ({ ...prev, ...newPrices }));
       setLastRefresh(new Date());
     } catch (error) {
@@ -95,13 +101,124 @@ export default function MasterLedgerPage() {
     }
   };
 
-  // Auto-refresh prices every 30 seconds
   useEffect(() => {
-    fetchMarketPrices();
-    const interval = setInterval(fetchMarketPrices, 30000);
-    return () => clearInterval(interval);
+    if (trades && trades.length > 0) {
+        fetchMarketPrices();
+        const interval = setInterval(fetchMarketPrices, 30000);
+        return () => clearInterval(interval);
+    }
   }, [trades]);
 
+  // 3. Logic & Memoization
+  const activeTrades = useMemo(() => (trades || []).filter(t => t.type !== "LONG_TERM_HOLDING"), [trades]);
+  const availableTypes = useMemo(() => Array.from(new Set(activeTrades.map(t => t.type))), [activeTrades]);
+
+  const filteredTrades = useMemo(() => {
+    return activeTrades.filter(t => {
+      const matchesSearch = t.ticker.toLowerCase().includes(search.toLowerCase());
+      const matchesStatus = statusFilter === "ALL" || t.status === statusFilter;
+      const matchesType = typeFilter === "ALL" || t.type === typeFilter;
+      const entryDate = new Date(t.entryDate);
+      const matchesDate = (!dateRange.from || entryDate >= dateRange.from) &&
+                          (!dateRange.to || entryDate <= dateRange.to);
+      let matchesPnl = true;
+      if (pnlFilter !== "ALL" && t.status === 'CLOSED') {
+        const pnl = (Number(t.sellPrice) - Number(t.buyPrice)) * Number(t.quantity) - Number(t.fees || 0);
+        if (pnlFilter === "PROFIT") matchesPnl = pnl > 0;
+        if (pnlFilter === "LOSS") matchesPnl = pnl < 0;
+      }
+      return matchesSearch && matchesStatus && matchesType && matchesDate && matchesPnl;
+    });
+  }, [activeTrades, search, statusFilter, typeFilter, dateRange, pnlFilter]);
+
+  const initialData = useMemo(() => {
+    let runningAccountValue = 0;
+    const chronologicalData = [...filteredTrades].sort((a, b) => 
+      new Date(a.entryDate).getTime() - new Date(b.entryDate).getTime()
+    );
+
+    return chronologicalData.map((trade, index) => {
+      const entryPrice = Number(trade.buyPrice);
+      const exitPrice = trade.sellPrice ? Number(trade.sellPrice) : null;
+      const quantity = Number(trade.quantity);
+      const stopLoss = trade.stopLoss ? Number(trade.stopLoss) : null;
+      const fees = Number(trade.fees || 0);
+      const livePrice = marketPrices[trade.ticker]?.price;
+      const manualCmp = manualCmpByTrade[trade.id];
+      const cmpValue = livePrice ?? manualCmp ?? null;
+      const currentPrice = trade.status === 'OPEN' ? cmpValue : exitPrice;
+      const slPercent = stopLoss && entryPrice ? ((entryPrice - stopLoss) / entryPrice) * 100 : null;
+      const rpt = stopLoss ? Math.abs((entryPrice - stopLoss) * quantity) : null;
+      const grossPnl = currentPrice ? (currentPrice - entryPrice) * quantity : null;
+      const netProfit = grossPnl !== null ? grossPnl - fees : null;
+      const entryValue = entryPrice * quantity;
+      const tradeGainPercent = netProfit !== null && entryValue > 0 ? (netProfit / entryValue) * 100 : null;
+      const rMultiple = netProfit !== null && rpt && rpt > 0 ? netProfit / rpt : null;
+      const entryDate = new Date(trade.entryDate);
+      const exitDate = trade.exitDate ? new Date(trade.exitDate) : (trade.status === 'OPEN' ? new Date() : null);
+      const holdingDays = exitDate ? differenceInDays(exitDate, entryDate) : null;
+      
+      if (netProfit !== null) {
+        runningAccountValue += netProfit;
+      }
+      
+      return {
+        no: index + 1,
+        entryDateObj: entryDate,
+        entryDate: format(entryDate, 'dd/MM/yyyy'),
+        strategy: trade.strategy || '-',
+        stock: trade.ticker,
+        qty: quantity,
+        entry: entryPrice,
+        sl: stopLoss,
+        slPercent,
+        rpt,
+        exitDate: trade.exitDate ? format(new Date(trade.exitDate), 'dd/MM/yyyy') : '-',
+        exitQty: trade.status === 'CLOSED' ? quantity : null,
+        exitPrice,
+        cmp: cmpValue,
+        tradeGainPercent,
+        rMultiple,
+        holdingDays,
+        grossProfit: grossPnl,
+        brokerage: fees,
+        netProfit,
+        accountValue: runningAccountValue,
+        notes: trade.notes || '-',
+        status: trade.status,
+        type: trade.type,
+        trade,
+      };
+    });
+  }, [filteredTrades, marketPrices, manualCmpByTrade]);
+
+  const spreadsheetData = useMemo(() => {
+    if (!sortConfig) return initialData;
+
+    return [...initialData].sort((a, b) => {
+      let aVal: any = a[sortConfig.key as keyof typeof a];
+      let bVal: any = b[sortConfig.key as keyof typeof b];
+
+      if (sortConfig.key === 'entryDate') {
+        aVal = a.entryDateObj.getTime();
+        bVal = b.entryDateObj.getTime();
+      }
+
+      if (aVal === bVal) return 0;
+      if (aVal === null || aVal === undefined) return 1;
+      if (bVal === null || bVal === undefined) return -1;
+
+      if (typeof aVal === 'string') {
+        aVal = aVal.toLowerCase();
+        bVal = bVal.toLowerCase();
+      }
+
+      const comparison = aVal < bVal ? -1 : 1;
+      return sortConfig.direction === 'asc' ? comparison : -comparison;
+    });
+  }, [initialData, sortConfig]);
+
+  // 4. Loading Check
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-screen bg-background">
@@ -113,103 +230,43 @@ export default function MasterLedgerPage() {
     );
   }
 
-  // Filter trades (exclude long-term holdings for the trading ledger)
-  const activeTrades = (trades || []).filter(t => t.type !== "LONG_TERM_HOLDING");
-  
-  const filteredTrades = activeTrades.filter(t => 
-    t.ticker.toLowerCase().includes(search.toLowerCase())
-  );
-
-  // Calculate metrics for spreadsheet
-  const calculateTradeMetrics = (trade: Trade, index: number, runningTotal: number) => {
-    const entryPrice = Number(trade.buyPrice);
-    const exitPrice = trade.sellPrice ? Number(trade.sellPrice) : null;
-    const quantity = Number(trade.quantity);
-    const stopLoss = trade.stopLoss ? Number(trade.stopLoss) : null;
-    const fees = Number(trade.fees || 0);
-    
-    // Get live CMP for open trades
-    const livePrice = marketPrices[trade.ticker]?.price;
-    const currentPrice = trade.status === 'OPEN' && livePrice ? livePrice : exitPrice;
-    
-    // SL% = (Entry - SL) / Entry * 100
-    const slPercent = stopLoss && entryPrice ? ((entryPrice - stopLoss) / entryPrice) * 100 : null;
-    
-    // RPT (Risk Per Trade) = abs((Entry - SL) * Quantity)
-    const rpt = stopLoss ? Math.abs((entryPrice - stopLoss) * quantity) : null;
-    
-    // Gross Profit/Loss (use live price for open, exit price for closed)
-    const grossPnl = currentPrice ? (currentPrice - entryPrice) * quantity : null;
-    
-    // Net Profit = Gross P&L - Fees
-    const netProfit = grossPnl !== null ? grossPnl - fees : null;
-    
-    // Trade Gain % = (Net Profit / Entry Value) * 100
-    const entryValue = entryPrice * quantity;
-    const tradeGainPercent = netProfit !== null && entryValue > 0 ? (netProfit / entryValue) * 100 : null;
-    
-    // R Multiple = Net Profit / RPT
-    const rMultiple = netProfit !== null && rpt && rpt > 0 ? netProfit / rpt : null;
-    
-    // Holding Days
-    const entryDate = new Date(trade.entryDate);
-    const exitDate = trade.exitDate ? new Date(trade.exitDate) : (trade.status === 'OPEN' ? new Date() : null);
-    const holdingDays = exitDate ? differenceInDays(exitDate, entryDate) : null;
-    
-    // Account Value (running total)
-    const accountValue = runningTotal + (netProfit || 0);
-    
-    return {
-      no: index + 1,
-      entryDate: format(entryDate, 'dd/MM/yyyy'),
-      strategy: trade.strategy || '-',
-      stock: trade.ticker,
-      qty: quantity,
-      entry: entryPrice,
-      sl: stopLoss,
-      slPercent,
-      rpt,
-      exitDate: trade.exitDate ? format(new Date(trade.exitDate), 'dd/MM/yyyy') : '-',
-      exitQty: trade.status === 'CLOSED' ? quantity : null,
-      exitPrice,
-      cmp: livePrice || null,
-      tradeGainPercent,
-      rMultiple,
-      holdingDays,
-      grossProfit: grossPnl,
-      brokerage: fees,
-      netProfit,
-      accountValue,
-      notes: trade.notes || '-',
-      status: trade.status,
-      type: trade.type,
-      trade,
-    };
+  // 5. Helpers
+  const handleTradeClick = (trade: Trade) => {
+    setSelectedTrade(trade);
+    setIsDetailsOpen(true);
   };
 
-  // Calculate metrics for all trades
-  let runningAccountValue = 0;
-  const spreadsheetData = filteredTrades
-    .sort((a, b) => new Date(a.entryDate).getTime() - new Date(b.entryDate).getTime())
-    .map((trade, index) => {
-      const metrics = calculateTradeMetrics(trade, index, runningAccountValue);
-      if (metrics.netProfit !== null) {
-        runningAccountValue += metrics.netProfit;
+  const handleSort = (key: string) => {
+    setSortConfig((current) => {
+      if (current?.key === key) {
+        if (current.direction === 'desc') return { key, direction: 'asc' };
+        return { key, direction: 'desc' }; 
       }
-      return { ...metrics, accountValue: runningAccountValue };
+      return { key, direction: 'desc' };
     });
+  };
 
-  // Summary stats
-  const totalTrades = spreadsheetData.length;
-  const openTrades = spreadsheetData.filter(t => t.status === 'OPEN').length;
-  const closedTrades = spreadsheetData.filter(t => t.status === 'CLOSED').length;
-  const totalNetPnl = spreadsheetData.reduce((sum, t) => sum + (t.netProfit || 0), 0);
-  const winningTrades = spreadsheetData.filter(t => t.status === 'CLOSED' && t.netProfit !== null && t.netProfit > 0).length;
+  const SortIcon = ({ column }: { column: string }) => {
+    if (sortConfig?.key !== column) return <ArrowUpDown className="ml-1 h-3 w-3 inline-block opacity-30" />;
+    return sortConfig.direction === 'asc' 
+      ? <ArrowUp className="ml-1 h-3 w-3 inline-block text-primary" /> 
+      : <ArrowDown className="ml-1 h-3 w-3 inline-block text-primary" />;
+  };
+
+  // 6. Calculated Stats
+  const totalTrades = initialData.length;
+  const openTrades = initialData.filter(t => t.status === 'OPEN').length;
+  const closedTrades = initialData.filter(t => t.status === 'CLOSED').length;
+  const totalNetPnl = initialData.reduce((sum, t) => sum + (t.netProfit || 0), 0);
+  const winningTrades = initialData.filter(t => t.status === 'CLOSED' && t.netProfit !== null && t.netProfit > 0).length;
   const winRate = closedTrades > 0 ? (winningTrades / closedTrades) * 100 : 0;
+  const currentRunningAccountValue = initialData.length > 0 ? initialData[initialData.length - 1].accountValue : 0;
+
+  const stickyHeaderClass = "sticky top-0 z-20 bg-background shadow-[0_1px_0_0_hsl(var(--border))]";
 
   return (
     <div className="fixed inset-0 bg-background flex flex-col z-50" data-testid="master-ledger-page">
-      {/* Minimal Header */}
+      {/* Header */}
       <header className="flex items-center justify-between px-4 py-2 border-b border-border bg-card/50 backdrop-blur-sm">
         <div className="flex items-center gap-4">
           <Button 
@@ -252,20 +309,10 @@ export default function MasterLedgerPage() {
 
         {/* Actions */}
         <div className="flex items-center gap-2">
-          <div className="relative">
-            <Filter className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search ticker..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9 w-40 h-8 text-sm"
-              data-testid="input-search-ticker"
-            />
-          </div>
           <Button 
             variant="outline" 
             size="sm" 
-            onClick={fetchMarketPrices}
+            onClick={() => fetchMarketPrices()}
             disabled={isRefreshing}
             data-testid="button-refresh-prices"
           >
@@ -280,34 +327,110 @@ export default function MasterLedgerPage() {
         </div>
       </header>
 
+      {/* Filter Bar */}
+      <div className="border-b border-border bg-card/30 px-4 py-2">
+        <SearchFilter
+          search={search}
+          onSearchChange={setSearch}
+          statusFilter={statusFilter}
+          onStatusFilterChange={setStatusFilter}
+          typeFilter={typeFilter}
+          onTypeFilterChange={setTypeFilter}
+          dateRange={dateRange}
+          onDateRangeChange={setDateRange}
+          pnlFilter={pnlFilter}
+          onPnlFilterChange={setPnlFilter}
+          availableTypes={availableTypes}
+        />
+      </div>
+
       {/* Full Screen Spreadsheet */}
       <div className="flex-1 overflow-hidden">
         <ScrollArea className="h-full w-full">
           <div className="min-w-[2000px]">
-            <Table>
-              <TableHeader className="sticky top-0 z-10">
-                <TableRow className="hover:bg-transparent border-border/50 bg-muted">
-                  <TableHead className="w-12 text-center font-bold text-xs">No.</TableHead>
-                  <TableHead className="font-bold text-xs">Entry Date</TableHead>
-                  <TableHead className="font-bold text-xs">Strategy</TableHead>
-                  <TableHead className="font-bold text-xs">Stock</TableHead>
-                  <TableHead className="text-right font-bold text-xs">Qty</TableHead>
-                  <TableHead className="text-right font-bold text-xs">Entry</TableHead>
-                  <TableHead className="text-right font-bold text-xs">SL</TableHead>
-                  <TableHead className="text-right font-bold text-xs">SL%</TableHead>
-                  <TableHead className="text-right font-bold text-xs">RPT</TableHead>
-                  <TableHead className="font-bold text-xs">Exit Date</TableHead>
-                  <TableHead className="text-right font-bold text-xs">Exit Qty</TableHead>
-                  <TableHead className="text-right font-bold text-xs">Exit/CMP</TableHead>
-                  <TableHead className="text-right font-bold text-xs">Gain %</TableHead>
-                  <TableHead className="text-right font-bold text-xs">R Multiple</TableHead>
-                  <TableHead className="text-right font-bold text-xs">Days</TableHead>
-                  <TableHead className="text-right font-bold text-xs">Gross P&L</TableHead>
-                  <TableHead className="text-right font-bold text-xs">Brokerage</TableHead>
-                  <TableHead className="text-right font-bold text-xs">Net Profit</TableHead>
-                  <TableHead className="text-right font-bold text-xs">Account</TableHead>
-                  <TableHead className="font-bold text-xs min-w-[180px]">Notes / Mistakes</TableHead>
-                  <TableHead className="text-center font-bold text-xs sticky right-0 bg-muted">Actions</TableHead>
+            <Table wrapperClassName="overflow-visible">
+              <TableHeader className="sticky top-0 z-30 bg-background">
+                <TableRow className="hover:bg-transparent border-border/50">
+                  <TableHead className={`w-12 text-center font-bold text-xs ${stickyHeaderClass}`}>No.</TableHead>
+                  
+                  <TableHead 
+                    className={`font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none ${stickyHeaderClass}`}
+                    onClick={() => handleSort('entryDate')}
+                  >
+                    Entry Date <SortIcon column="entryDate" />
+                  </TableHead>
+
+                  <TableHead className={`font-bold text-xs ${stickyHeaderClass}`}>Strategy</TableHead>
+                  
+                  <TableHead 
+                    className={`font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none ${stickyHeaderClass}`}
+                    onClick={() => handleSort('stock')}
+                  >
+                    Stock <SortIcon column="stock" />
+                  </TableHead>
+
+                  <TableHead 
+                    className={`text-right font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none ${stickyHeaderClass}`}
+                    onClick={() => handleSort('qty')}
+                  >
+                    Qty <SortIcon column="qty" />
+                  </TableHead>
+
+                  <TableHead 
+                    className={`text-right font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none ${stickyHeaderClass}`}
+                    onClick={() => handleSort('entry')}
+                  >
+                    Entry <SortIcon column="entry" />
+                  </TableHead>
+
+                  <TableHead className={`text-right font-bold text-xs ${stickyHeaderClass}`}>SL</TableHead>
+                  <TableHead className={`text-right font-bold text-xs ${stickyHeaderClass}`}>SL%</TableHead>
+                  <TableHead className={`text-right font-bold text-xs ${stickyHeaderClass}`}>RPT</TableHead>
+                  <TableHead className={`font-bold text-xs ${stickyHeaderClass}`}>Exit Date</TableHead>
+                  <TableHead className={`text-right font-bold text-xs ${stickyHeaderClass}`}>Exit Qty</TableHead>
+                  
+                  {/* SPLIT COLUMN 1: Exit Price */}
+                  <TableHead 
+                    className={`text-right font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none ${stickyHeaderClass}`}
+                    onClick={() => handleSort('exitPrice')}
+                  >
+                    Exit Price <SortIcon column="exitPrice" />
+                  </TableHead>
+
+                  {/* SPLIT COLUMN 2: CMP */}
+                  <TableHead 
+                    className={`text-right font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none ${stickyHeaderClass}`}
+                    onClick={() => handleSort('cmp')}
+                  >
+                    CMP <SortIcon column="cmp" />
+                  </TableHead>
+                  
+                  <TableHead 
+                    className={`text-right font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none ${stickyHeaderClass}`}
+                    onClick={() => handleSort('tradeGainPercent')}
+                  >
+                    Gain % <SortIcon column="tradeGainPercent" />
+                  </TableHead>
+
+                  <TableHead className={`text-right font-bold text-xs ${stickyHeaderClass}`}>R Multiple</TableHead>
+                  <TableHead className={`text-right font-bold text-xs ${stickyHeaderClass}`}>Days</TableHead>
+                  
+                  <TableHead 
+                    className={`text-right font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none ${stickyHeaderClass}`}
+                    onClick={() => handleSort('netProfit')}
+                  >
+                    Net Profit <SortIcon column="netProfit" />
+                  </TableHead>
+                  
+                  <TableHead className={`text-right font-bold text-xs ${stickyHeaderClass}`}>Brokerage</TableHead>
+                  <TableHead className={`text-right font-bold text-xs ${stickyHeaderClass}`}>Net Profit</TableHead>
+                  <TableHead className={`text-right font-bold text-xs ${stickyHeaderClass}`}>Account</TableHead>
+                  <TableHead className={`font-bold text-xs min-w-[180px] ${stickyHeaderClass}`}>Notes / Mistakes</TableHead>
+                  
+                  {/* Sticky CORNER */}
+                  <TableHead className="text-center font-bold text-xs sticky top-0 right-0 z-50 bg-background shadow-[0_1px_0_0_hsl(var(--border))]">
+                    Actions
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -315,7 +438,9 @@ export default function MasterLedgerPage() {
                   const isProfitable = row.netProfit !== null && row.netProfit > 0;
                   const isLoss = row.netProfit !== null && row.netProfit < 0;
                   const isOpen = row.status === 'OPEN';
-                  const hasLivePrice = row.cmp !== null;
+                  const hasLivePrice =
+                    marketPrices[row.stock]?.price !== undefined &&
+                    marketPrices[row.stock]?.price !== null;
                   
                   return (
                     <TableRow 
@@ -350,24 +475,45 @@ export default function MasterLedgerPage() {
                       <TableCell className="text-right font-mono text-xs">
                         {row.exitQty !== null ? row.exitQty : '-'}
                       </TableCell>
+
+                      {/* SPLIT CELL 1: Exit Price (Shows only if closed) */}
+                      <TableCell className="text-right font-mono text-xs">
+                        {row.exitPrice !== null ? `₹${row.exitPrice.toLocaleString('en-IN')}` : '-'}
+                      </TableCell>
+
+                      {/* SPLIT CELL 2: CMP (Shows only if open) */}
                       <TableCell className="text-right font-mono text-xs">
                         {isOpen && hasLivePrice ? (
                           <div className="flex items-center justify-end gap-1">
-                            <span className="text-primary font-bold">₹{row.cmp!.toLocaleString('en-IN')}</span>
+                            <span className="text-primary font-bold">{"\u20B9"}{row.cmp!.toLocaleString('en-IN')}</span>
                             {row.cmp! > row.entry ? (
                               <TrendingUp className="h-3 w-3 text-profit" />
                             ) : (
                               <TrendingDown className="h-3 w-3 text-loss" />
                             )}
                           </div>
-                        ) : row.exitPrice !== null ? (
-                          `₹${row.exitPrice.toLocaleString('en-IN')}`
+                        ) : isOpen ? (
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            placeholder="Add CMP"
+                            className="w-24 rounded border border-border bg-background px-2 py-1 text-right text-xs font-mono"
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setManualCmpByTrade((prev) => {
+                                if (!value) {
+                                  const { [row.trade.id]: _, ...rest } = prev;
+                                  return rest;
+                                }
+                                return { ...prev, [row.trade.id]: Number(value) };
+                              });
+                            }}
+                            value={manualCmpByTrade[row.trade.id] ?? ""}
+                          />
                         ) : (
                           <span className="text-muted-foreground">-</span>
                         )}
-                      </TableCell>
-                      <TableCell className={cn("text-right font-mono text-xs font-medium", isProfitable ? 'text-profit' : isLoss ? 'text-loss' : '')}>
-                        {row.tradeGainPercent !== null ? `${row.tradeGainPercent.toFixed(2)}%` : '-'}
                       </TableCell>
                       <TableCell className={cn("text-right font-mono text-xs font-medium", isProfitable ? 'text-profit' : isLoss ? 'text-loss' : '')}>
                         {row.rMultiple !== null ? `${row.rMultiple.toFixed(2)}R` : '-'}
@@ -425,8 +571,8 @@ export default function MasterLedgerPage() {
                 })}
                 {spreadsheetData.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={21} className="h-32 text-center text-muted-foreground">
-                      No trades found. Click "New Trade" to add your first entry.
+                    <TableCell colSpan={22} className="h-32 text-center text-muted-foreground">
+                      No trades match your search criteria.
                     </TableCell>
                   </TableRow>
                 )}
@@ -455,8 +601,8 @@ export default function MasterLedgerPage() {
           </div>
           <div>
             <span className="text-muted-foreground mr-2">Account Value:</span>
-            <span className={cn("font-mono font-bold", runningAccountValue >= 0 ? "text-profit" : "text-loss")}>
-              ₹{runningAccountValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            <span className={cn("font-mono font-bold", currentRunningAccountValue >= 0 ? "text-profit" : "text-loss")}>
+              ₹{currentRunningAccountValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
             </span>
           </div>
         </div>

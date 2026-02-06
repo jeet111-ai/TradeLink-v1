@@ -7,10 +7,12 @@ export const TRADE_STATUS = ["OPEN", "CLOSED"] as const;
 
 export const trades = pgTable("trades", {
   id: serial("id").primaryKey(),
+  userId: integer("user_id"), // <-- ADDED THIS (Required for Auth)
   ticker: text("ticker").notNull(),
   entryDate: timestamp("entry_date").notNull().defaultNow(),
   exitDate: timestamp("exit_date"),
-  // Financial values as numeric for precision, handled as strings in JS
+  
+  // Financial values
   buyPrice: numeric("buy_price").notNull(),
   sellPrice: numeric("sell_price"),
   quantity: numeric("quantity").notNull(),
@@ -34,12 +36,13 @@ export const trades = pgTable("trades", {
   parentTradeId: integer("parent_trade_id"),
 });
 
-// Base schema from drizzle, then override date fields to accept strings
+// Base schema from drizzle
 const baseInsertSchema = createInsertSchema(trades).omit({ 
-  id: true 
+  id: true,
+  userId: true // Allow creating trades without manually passing ID (backend handles it)
 });
 
-// Override entryDate and exitDate to accept both Date objects and ISO strings
+// Keep your existing Date Logic (Crucial for stability)
 export const insertTradeSchema = baseInsertSchema.extend({
   entryDate: z.union([z.date(), z.string().transform(s => new Date(s))]).optional(),
   exitDate: z.union([z.date(), z.string().transform(s => new Date(s)), z.null()]).optional(),
@@ -48,13 +51,19 @@ export const insertTradeSchema = baseInsertSchema.extend({
 export type Trade = typeof trades.$inferSelect;
 export type InsertTrade = z.infer<typeof insertTradeSchema>;
 
+// USERS TABLE (Kept your structure)
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
-  username: text("username").notNull().unique(),
+  email: text("email").notNull().unique(),
   password: text("password").notNull(),
+  resetTokenHash: text("reset_token_hash"),
+  resetTokenExpires: timestamp("reset_token_expires"),
 });
 
-export const insertUserSchema = createInsertSchema(users);
+export const insertUserSchema = createInsertSchema(users).extend({
+  email: z.string().email("Invalid email address"),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+});
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
