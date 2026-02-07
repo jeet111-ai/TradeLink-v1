@@ -1,15 +1,15 @@
 import type { Express } from "express";
-import type { Server } from "http";
+import { createServer, type Server } from "http"; // Modified import
 import { storage } from "./storage";
 import { api } from "@shared/routes";
+import { insertTradeSchema } from "@shared/schema"; // Added this
 import { z } from "zod";
-
 import { setupAuth } from "./auth";
 
-export async function registerRoutes(
-  httpServer: Server,
-  app: Express
-): Promise<Server> {
+// CHANGED: Now accepts only 'app', and creates server inside
+export async function registerRoutes(app: Express): Promise<Server> {
+  const httpServer = createServer(app); // New line: Create server here
+
   setupAuth(app);
   
   // GET /api/trades
@@ -367,7 +367,7 @@ export async function registerRoutes(
   });
 
   // Seed Data
-  seedDatabase();
+  //seedDatabase();
 
   return httpServer;
 }

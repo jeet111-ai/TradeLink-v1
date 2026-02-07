@@ -419,7 +419,7 @@ export default function MasterLedgerPage() {
                     className={`text-right font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none ${stickyHeaderClass}`}
                     onClick={() => handleSort('netProfit')}
                   >
-                    Net Profit <SortIcon column="netProfit" />
+                    Gross Profit <SortIcon column="netProfit" />
                   </TableHead>
                   
                   <TableHead className={`text-right font-bold text-xs ${stickyHeaderClass}`}>Brokerage</TableHead>
@@ -514,6 +514,9 @@ export default function MasterLedgerPage() {
                         ) : (
                           <span className="text-muted-foreground">-</span>
                         )}
+                      </TableCell>
+                      <TableCell className={cn("text-right font-mono text-xs font-medium", isProfitable ? 'text-profit' : isLoss ? 'text-loss' : '')}>
+                        {row.tradeGainPercent !== null ? `${row.tradeGainPercent.toFixed(2)}%` : '-'}
                       </TableCell>
                       <TableCell className={cn("text-right font-mono text-xs font-medium", isProfitable ? 'text-profit' : isLoss ? 'text-loss' : '')}>
                         {row.rMultiple !== null ? `${row.rMultiple.toFixed(2)}R` : '-'}
