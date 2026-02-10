@@ -353,12 +353,13 @@ export default function MasterLedgerPage() {
                 <TableRow className="hover:bg-transparent border-border/50">
                   <TableHead
                     className={cn(
-                      "text-center font-bold text-xs",
+                      "text-center font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none",
                       stickyHeaderClass,
                       "sticky left-0 z-40 w-12 min-w-[48px] bg-background shadow-[1px_0_0_0_hsl(var(--border))]"
                     )}
+                    onClick={() => handleSort('no')}
                   >
-                    No.
+                    No. <SortIcon column="no" />
                   </TableHead>
 
                   <TableHead 
@@ -395,7 +396,12 @@ export default function MasterLedgerPage() {
 
                   <TableHead className={`text-right font-bold text-xs ${stickyHeaderClass}`}>SL</TableHead>
                   <TableHead className={`text-right font-bold text-xs ${stickyHeaderClass}`}>SL%</TableHead>
-                  <TableHead className={`text-right font-bold text-xs ${stickyHeaderClass}`}>RPT</TableHead>
+                  <TableHead
+                    className={`text-right font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none ${stickyHeaderClass}`}
+                    onClick={() => handleSort('rpt')}
+                  >
+                    RPT <SortIcon column="rpt" />
+                  </TableHead>
                   <TableHead className={`font-bold text-xs ${stickyHeaderClass}`}>Exit Date</TableHead>
                   <TableHead className={`text-right font-bold text-xs ${stickyHeaderClass}`}>Exit Qty</TableHead>
                   
@@ -422,7 +428,12 @@ export default function MasterLedgerPage() {
                     Gain % <SortIcon column="tradeGainPercent" />
                   </TableHead>
 
-                  <TableHead className={`text-right font-bold text-xs ${stickyHeaderClass}`}>R Multiple</TableHead>
+                  <TableHead
+                    className={`text-right font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none ${stickyHeaderClass}`}
+                    onClick={() => handleSort('rMultiple')}
+                  >
+                    R Multiple <SortIcon column="rMultiple" />
+                  </TableHead>
                   <TableHead 
                     className={`text-right font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none ${stickyHeaderClass}`}
                     onClick={() => handleSort('holdingDays')}
