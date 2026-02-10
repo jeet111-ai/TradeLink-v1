@@ -1,20 +1,90 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http"; // Modified import
 import { storage } from "./storage";
+import { db, pool } from "./db";
 import { api } from "@shared/routes";
-import { insertTradeSchema } from "@shared/schema"; // Added this
+import { insertTradeSchema, users, trades as tradesTable, type User } from "@shared/schema"; // Added this
 import { z } from "zod";
+import { eq } from "drizzle-orm";
 import { setupAuth } from "./auth";
+import { randomBytes, scrypt } from "crypto";
+import { promisify } from "util";
+
+const scryptAsync = promisify(scrypt);
+
+async function hashPassword(password: string) {
+  const salt = randomBytes(16).toString("hex");
+  const buf = (await scryptAsync(password, salt, 64)) as Buffer;
+  return `${buf.toString("hex")}.${salt}`;
+}
 
 // CHANGED: Now accepts only 'app', and creates server inside
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app); // New line: Create server here
 
   setupAuth(app);
+
+  const getUserIdOrReject = (req: any, res: any): number | null => {
+    if (!req.isAuthenticated || !req.isAuthenticated()) {
+      res.sendStatus(401);
+      return null;
+    }
+    return (req.user as User).id;
+  };
+
+  app.post("/api/admin/migrate-legacy-trades", async (req, res) => {
+    const token = req.header("X-Admin-Token");
+    const expected = process.env.ADMIN_MIGRATION_TOKEN;
+    if (!expected || !token || token !== expected) {
+      return res.sendStatus(401);
+    }
+
+    try {
+      const ownerEmail = "ttstrader12@gmail.com";
+      let [ownerUser] = await db.select().from(users).where(eq(users.email, ownerEmail));
+
+      if (!ownerUser) {
+        const tempPassword = randomBytes(16).toString("hex");
+        const hashed = await hashPassword(tempPassword);
+        const created = await db
+          .insert(users)
+          .values({ email: ownerEmail, password: hashed })
+          .returning();
+        ownerUser = created[0];
+      }
+
+      const updateResult = await pool.query(
+        `UPDATE trades SET user_id = $1 WHERE user_id IS NULL`,
+        [ownerUser.id],
+      );
+
+      let constraintsApplied = false;
+      try {
+        await pool.query(`ALTER TABLE trades ALTER COLUMN user_id SET NOT NULL`);
+      } catch {}
+      try {
+        await pool.query(
+          `ALTER TABLE trades ADD CONSTRAINT trades_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
+        );
+        constraintsApplied = true;
+      } catch {}
+
+      res.status(200).json({
+        updatedTrades: updateResult.rowCount ?? 0,
+        userId: ownerUser.id,
+        constraintsApplied,
+      });
+    } catch (err) {
+      res.status(500).json({ message: "Migration failed" });
+    }
+  });
   
   // GET /api/trades
   app.get(api.trades.list.path, async (req, res) => {
-    const allTrades = await storage.getTrades();
+    const userId = getUserIdOrReject(req, res);
+    if (!userId) return;
+
+    const allTrades = await storage.getTrades(userId);
     // Basic filtering if query params are present
     const type = req.query.type as string;
     const status = req.query.status as string;
@@ -31,8 +101,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // GET /api/stats
-  app.get(api.trades.stats.path, async (_req, res) => {
-    const allTrades = await storage.getTrades();
+  app.get(api.trades.stats.path, async (req, res) => {
+    const userId = getUserIdOrReject(req, res);
+    if (!userId) return;
+
+    const allTrades = await storage.getTrades(userId);
     const closedTrades = allTrades.filter(t => t.status === 'CLOSED');
     
     // Sort by entry date for equity curve
@@ -181,7 +254,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // GET /api/trades/:id
   app.get(api.trades.get.path, async (req, res) => {
-    const trade = await storage.getTrade(Number(req.params.id));
+    const userId = getUserIdOrReject(req, res);
+    if (!userId) return;
+
+    const trade = await storage.getTradeByIdAndUser(Number(req.params.id), userId);
     if (!trade) {
       return res.status(404).json({ message: 'Trade not found' });
     }
@@ -191,10 +267,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // POST /api/trades
   app.post(api.trades.create.path, async (req, res) => {
     try {
+      const userId = getUserIdOrReject(req, res);
+      if (!userId) return;
+
       // Coerce numeric strings if necessary, though Zod + Drizzle handles it well usually
       // Ideally frontend sends correct types, but pure JSON is usually fine.
       const input = api.trades.create.input.parse(req.body);
-      const trade = await storage.createTrade(input);
+      const trade = await storage.createTrade(input, userId);
       res.status(201).json(trade);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -210,8 +289,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // PUT /api/trades/:id
   app.put(api.trades.update.path, async (req, res) => {
     try {
+      const userId = getUserIdOrReject(req, res);
+      if (!userId) return;
+
       const input = api.trades.update.input.parse(req.body);
-      const trade = await storage.updateTrade(Number(req.params.id), input);
+      const trade = await storage.updateTradeByIdAndUser(Number(req.params.id), userId, input);
       if (!trade) {
         return res.status(404).json({ message: 'Trade not found' });
       }
@@ -229,18 +311,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     // DELETE /api/trades/:id
     app.delete(api.trades.delete.path, async (req, res) => {
-      const trade = await storage.getTrade(Number(req.params.id));
+      const userId = getUserIdOrReject(req, res);
+      if (!userId) return;
+
+      const trade = await storage.getTradeByIdAndUser(Number(req.params.id), userId);
       if (!trade) {
         return res.status(404).json({ message: 'Trade not found' });
       }
-      await storage.deleteTrade(Number(req.params.id));
+      await storage.deleteTradeByIdAndUser(Number(req.params.id), userId);
       res.status(204).end();
     });
 
     app.get("/api/trades/:id/campaign", async (req, res) => {
       try {
+        const userId = getUserIdOrReject(req, res);
+        if (!userId) return;
+
         const id = Number(req.params.id);
-        const allTrades = await storage.getTrades();
+        const allTrades = await storage.getTrades(userId);
         const trade = allTrades.find(t => t.id === id);
         
         if (!trade) {
@@ -305,8 +393,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     app.get("/api/trades/:id/history", async (req, res) => {
+      const userId = getUserIdOrReject(req, res);
+      if (!userId) return;
+
       const id = Number(req.params.id);
-      const allTrades = await storage.getTrades();
+      const allTrades = await storage.getTrades(userId);
       const tradeHistory = allTrades.filter(t => t.id === id || t.parentTradeId === id);
       res.json(tradeHistory);
     });
@@ -314,6 +405,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // POST /api/trades/:id/close
   app.post("/api/trades/:id/close", async (req, res) => {
     try {
+      const userId = getUserIdOrReject(req, res);
+      if (!userId) return;
+
       const id = Number(req.params.id);
       const { quantity, sellPrice, exitDate, fees } = z.object({
         quantity: z.string(),
@@ -322,7 +416,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         fees: z.string().optional().default("0"),
       }).parse(req.body);
 
-      const originalTrade = await storage.getTrade(id);
+      const originalTrade = await storage.getTradeByIdAndUser(id, userId);
       if (!originalTrade) {
         return res.status(404).json({ message: "Trade not found" });
       }
@@ -335,24 +429,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Create the closed trade record
-      const closedTrade = await storage.createTrade({
-        ...originalTrade,
-        id: undefined,
-        quantity: quantity,
-        sellPrice: sellPrice,
-        exitDate: new Date(exitDate),
-        status: "CLOSED",
-        fees: (Number(originalTrade.fees || 0) + Number(fees)).toString(),
-        parentTradeId: id,
-      } as any);
+      const closedTrade = await storage.createTrade(
+        {
+          ...originalTrade,
+          id: undefined,
+          quantity: quantity,
+          sellPrice: sellPrice,
+          exitDate: new Date(exitDate),
+          status: "CLOSED",
+          fees: (Number(originalTrade.fees || 0) + Number(fees)).toString(),
+          parentTradeId: id,
+        } as any,
+        userId,
+      );
 
       if (sellQty === originalQty) {
         // Full sell: Delete or mark original as closed? 
         // Best practice: Delete the "OPEN" placeholder if we just created a "CLOSED" one to represent it
-        await storage.deleteTrade(id);
+        await storage.deleteTradeByIdAndUser(id, userId);
       } else {
         // Partial sell: Update original quantity
-        await storage.updateTrade(id, {
+        await storage.updateTradeByIdAndUser(id, userId, {
           quantity: (originalQty - sellQty).toString(),
         });
       }
@@ -373,10 +470,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 }
 
 async function seedDatabase() {
-  const existing = await storage.getTrades();
+  const existing = await db.select().from(tradesTable).limit(1);
   if (existing.length > 0) return;
 
   console.log("Seeding database...");
+
+  const [seedUser] = await db.select().from(users).limit(1);
+  if (!seedUser) return;
 
   // Active Trades (Futures)
   await storage.createTrade({
@@ -391,7 +491,7 @@ async function seedDatabase() {
     strategy: "Scalp",
     leverage: "10",
     notes: "Quick morning scalp off support",
-  });
+  }, seedUser.id);
 
   await storage.createTrade({
     ticker: "NQ",
@@ -406,7 +506,7 @@ async function seedDatabase() {
     leverage: "10",
     notes: "Failed breakout, stopped out",
     stopLoss: "18050.00",
-  });
+  }, seedUser.id);
 
   // Long Term Investments
   await storage.createTrade({
@@ -418,7 +518,7 @@ async function seedDatabase() {
     entryDate: new Date("2023-05-15"),
     sector: "Technology",
     fundamentalReason: "AI boom leader, strong moat",
-  });
+  }, seedUser.id);
 
   await storage.createTrade({
     ticker: "JPM",
@@ -429,7 +529,7 @@ async function seedDatabase() {
     entryDate: new Date("2023-08-20"),
     sector: "Financials",
     fundamentalReason: "Safe haven, good yield",
-  });
+  }, seedUser.id);
   
   console.log("Database seeded!");
 }

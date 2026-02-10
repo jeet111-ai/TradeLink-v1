@@ -8,11 +8,18 @@ import connectPg from "connect-pg-simple";
 const PostgresSessionStore = connectPg(session);
 
 export interface IStorage {
-  getTrades(): Promise<Trade[]>;
+  getTrades(userId: number): Promise<Trade[]>;
   getTrade(id: number): Promise<Trade | undefined>;
-  createTrade(trade: InsertTrade): Promise<Trade>;
+  getTradeByIdAndUser(id: number, userId: number): Promise<Trade | undefined>;
+  createTrade(trade: InsertTrade, userId: number): Promise<Trade>;
   updateTrade(id: number, updates: Partial<InsertTrade>): Promise<Trade>;
+  updateTradeByIdAndUser(
+    id: number,
+    userId: number,
+    updates: Partial<InsertTrade>,
+  ): Promise<Trade | undefined>;
   deleteTrade(id: number): Promise<void>;
+  deleteTradeByIdAndUser(id: number, userId: number): Promise<void>;
 
   getUser(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>; // Changed to Email
@@ -98,8 +105,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   // --- TRADE METHODS ---
-  async getTrades(): Promise<Trade[]> {
-    return await db.select().from(trades).orderBy(desc(trades.entryDate));
+  async getTrades(userId: number): Promise<Trade[]> {
+    return await db
+      .select()
+      .from(trades)
+      .where(eq(trades.userId, userId))
+      .orderBy(desc(trades.entryDate));
   }
 
   async getTrade(id: number): Promise<Trade | undefined> {
@@ -107,8 +118,19 @@ export class DatabaseStorage implements IStorage {
     return trade;
   }
 
-  async createTrade(insertTrade: InsertTrade): Promise<Trade> {
-    const [trade] = await db.insert(trades).values(insertTrade).returning();
+  async getTradeByIdAndUser(id: number, userId: number): Promise<Trade | undefined> {
+    const [trade] = await db
+      .select()
+      .from(trades)
+      .where(and(eq(trades.id, id), eq(trades.userId, userId)));
+    return trade;
+  }
+
+  async createTrade(insertTrade: InsertTrade, userId: number): Promise<Trade> {
+    const [trade] = await db
+      .insert(trades)
+      .values({ ...insertTrade, userId })
+      .returning();
     return trade;
   }
 
@@ -121,8 +143,25 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
+  async updateTradeByIdAndUser(
+    id: number,
+    userId: number,
+    updates: Partial<InsertTrade>,
+  ): Promise<Trade | undefined> {
+    const [updated] = await db
+      .update(trades)
+      .set(updates)
+      .where(and(eq(trades.id, id), eq(trades.userId, userId)))
+      .returning();
+    return updated;
+  }
+
   async deleteTrade(id: number): Promise<void> {
     await db.delete(trades).where(eq(trades.id, id));
+  }
+
+  async deleteTradeByIdAndUser(id: number, userId: number): Promise<void> {
+    await db.delete(trades).where(and(eq(trades.id, id), eq(trades.userId, userId)));
   }
 }
 

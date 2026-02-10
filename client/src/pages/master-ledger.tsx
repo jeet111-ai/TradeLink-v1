@@ -351,22 +351,32 @@ export default function MasterLedgerPage() {
             <Table wrapperClassName="overflow-visible">
               <TableHeader className="sticky top-0 z-30 bg-background">
                 <TableRow className="hover:bg-transparent border-border/50">
-                  <TableHead className={`w-12 text-center font-bold text-xs ${stickyHeaderClass}`}>No.</TableHead>
-                  
+                  <TableHead
+                    className={cn(
+                      "text-center font-bold text-xs",
+                      stickyHeaderClass,
+                      "sticky left-0 z-40 w-12 min-w-[48px] bg-background shadow-[1px_0_0_0_hsl(var(--border))]"
+                    )}
+                  >
+                    No.
+                  </TableHead>
+
+                  <TableHead 
+                    className={cn(
+                      "font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none",
+                      stickyHeaderClass,
+                      "sticky left-12 z-40 w-32 min-w-[128px] bg-background shadow-[1px_0_0_0_hsl(var(--border))]"
+                    )}
+                    onClick={() => handleSort('stock')}
+                  >
+                    Stock <SortIcon column="stock" />
+                  </TableHead>
+
                   <TableHead 
                     className={`font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none ${stickyHeaderClass}`}
                     onClick={() => handleSort('entryDate')}
                   >
                     Entry Date <SortIcon column="entryDate" />
-                  </TableHead>
-
-                  <TableHead className={`font-bold text-xs ${stickyHeaderClass}`}>Strategy</TableHead>
-                  
-                  <TableHead 
-                    className={`font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none ${stickyHeaderClass}`}
-                    onClick={() => handleSort('stock')}
-                  >
-                    Stock <SortIcon column="stock" />
                   </TableHead>
 
                   <TableHead 
@@ -413,22 +423,43 @@ export default function MasterLedgerPage() {
                   </TableHead>
 
                   <TableHead className={`text-right font-bold text-xs ${stickyHeaderClass}`}>R Multiple</TableHead>
-                  <TableHead className={`text-right font-bold text-xs ${stickyHeaderClass}`}>Days</TableHead>
+                  <TableHead 
+                    className={`text-right font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none ${stickyHeaderClass}`}
+                    onClick={() => handleSort('holdingDays')}
+                  >
+                    Days <SortIcon column="holdingDays" />
+                  </TableHead>
                   
                   <TableHead 
                     className={`text-right font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none ${stickyHeaderClass}`}
-                    onClick={() => handleSort('netProfit')}
+                    onClick={() => handleSort('grossProfit')}
                   >
-                    Gross Profit <SortIcon column="netProfit" />
+                    Gross Profit <SortIcon column="grossProfit" />
                   </TableHead>
                   
                   <TableHead className={`text-right font-bold text-xs ${stickyHeaderClass}`}>Brokerage</TableHead>
-                  <TableHead className={`text-right font-bold text-xs ${stickyHeaderClass}`}>Net Profit</TableHead>
-                  <TableHead className={`text-right font-bold text-xs ${stickyHeaderClass}`}>Account</TableHead>
+                  <TableHead 
+                    className={`text-right font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none ${stickyHeaderClass}`}
+                    onClick={() => handleSort('accountValue')}
+                  >
+                    Account <SortIcon column="accountValue" />
+                  </TableHead>
                   <TableHead className={`font-bold text-xs min-w-[180px] ${stickyHeaderClass}`}>Notes / Mistakes</TableHead>
+                  <TableHead className={`font-bold text-xs ${stickyHeaderClass}`}>Strategy</TableHead>
                   
+                  <TableHead 
+                    className={cn(
+                      "text-right font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none",
+                      stickyHeaderClass,
+                      "sticky right-24 z-50 bg-background shadow-[-1px_0_0_0_hsl(var(--border))] backdrop-blur-sm"
+                    )}
+                    onClick={() => handleSort('netProfit')}
+                  >
+                    Net Profit <SortIcon column="netProfit" />
+                  </TableHead>
+
                   {/* Sticky CORNER */}
-                  <TableHead className="text-center font-bold text-xs sticky top-0 right-0 z-50 bg-background shadow-[0_1px_0_0_hsl(var(--border))]">
+                  <TableHead className="text-center font-bold text-xs sticky top-0 right-0 z-50 bg-background shadow-[0_1px_0_0_hsl(var(--border))] backdrop-blur-sm w-24 min-w-[96px]">
                     Actions
                   </TableHead>
                 </TableRow>
@@ -446,20 +477,19 @@ export default function MasterLedgerPage() {
                     <TableRow 
                       key={row.trade.id} 
                       className={cn(
-                        "hover:bg-muted/50 border-border/50 cursor-pointer transition-colors",
+                        "relative hover:bg-muted/50 border-border/50 cursor-pointer transition-colors",
                         isOpen && "bg-primary/5"
                       )}
                       onClick={() => handleTradeClick(row.trade)}
                       data-testid={`row-trade-${row.trade.id}`}
                     >
-                      <TableCell className="text-center font-mono text-xs text-muted-foreground">{row.no}</TableCell>
-                      <TableCell className="font-mono text-xs">{row.entryDate}</TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-[10px] uppercase">
-                          {row.strategy}
-                        </Badge>
+                      <TableCell className="text-center font-mono text-xs text-muted-foreground sticky left-0 z-30 bg-background shadow-[1px_0_0_0_hsl(var(--border))] w-12 min-w-[48px]">
+                        {row.no}
                       </TableCell>
-                      <TableCell className="font-mono font-bold text-primary">{row.stock}</TableCell>
+                      <TableCell className="font-mono font-bold text-primary sticky left-12 z-30 bg-background shadow-[1px_0_0_0_hsl(var(--border))] w-32 min-w-[128px]">
+                        {row.stock}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">{row.entryDate}</TableCell>
                       <TableCell className="text-right font-mono text-xs">{row.qty}</TableCell>
                       <TableCell className="text-right font-mono text-xs">₹{row.entry.toLocaleString('en-IN')}</TableCell>
                       <TableCell className="text-right font-mono text-xs text-loss">
@@ -515,6 +545,7 @@ export default function MasterLedgerPage() {
                           <span className="text-muted-foreground">-</span>
                         )}
                       </TableCell>
+                      
                       <TableCell className={cn("text-right font-mono text-xs font-medium", isProfitable ? 'text-profit' : isLoss ? 'text-loss' : '')}>
                         {row.tradeGainPercent !== null ? `${row.tradeGainPercent.toFixed(2)}%` : '-'}
                       </TableCell>
@@ -525,24 +556,32 @@ export default function MasterLedgerPage() {
                         {row.holdingDays !== null ? row.holdingDays : '-'}
                       </TableCell>
                       <TableCell className={cn("text-right font-mono text-xs font-medium", isProfitable ? 'text-profit' : isLoss ? 'text-loss' : '')}>
-                        {row.grossProfit !== null ? `₹${row.grossProfit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '-'}
+                        {row.grossProfit !== null ? `\u20B9${row.grossProfit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '-'}
                       </TableCell>
                       <TableCell className="text-right font-mono text-xs text-muted-foreground">
-                        ₹{row.brokerage.toLocaleString('en-IN')}
-                      </TableCell>
-                      <TableCell className={cn(
-                        "text-right font-mono text-xs font-bold",
-                        isProfitable ? 'text-profit bg-profit/10' : isLoss ? 'text-loss bg-loss/10' : ''
-                      )}>
-                        {row.netProfit !== null ? `₹${row.netProfit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '-'}
+                        {"\u20B9"}{row.brokerage.toLocaleString('en-IN')}
                       </TableCell>
                       <TableCell className="text-right font-mono text-xs">
-                        ₹{row.accountValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        {"\u20B9"}{row.accountValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground max-w-[180px] truncate">
                         {row.notes}
                       </TableCell>
-                      <TableCell className="text-center sticky right-0 bg-background" onClick={(e) => e.stopPropagation()}>
+                      <TableCell>
+                        <Badge variant="outline" className="text-[10px] uppercase">
+                          {row.strategy}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className={cn(
+                        "relative text-right font-mono text-xs font-bold sticky right-24 z-50 bg-background shadow-[-1px_0_0_0_hsl(var(--border))] overflow-hidden",
+                        isProfitable ? 'text-profit bg-profit/10' : isLoss ? 'text-loss bg-loss/10' : ''
+                      )}>
+                        <span className="absolute inset-0 bg-background" aria-hidden />
+                        <span className="relative z-10">
+                          {row.netProfit !== null ? `\u20B9${row.netProfit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '-'}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-center sticky right-0 z-50 bg-background w-24 min-w-[96px] shadow-[-1px_0_0_0_hsl(var(--border))] backdrop-blur-sm" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-center gap-1">
                           {row.trade.chartUrl && (
                             <Button 
