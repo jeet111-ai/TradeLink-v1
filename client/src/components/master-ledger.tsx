@@ -11,10 +11,7 @@ import { Trade } from "@shared/schema";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import React, { useState, useMemo } from "react";
-import { ChevronDown, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, FileUp, Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { useCreateTrade } from "@/hooks/use-trades";
-import { useToast } from "@/hooks/use-toast";
+import { ChevronDown, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 
 interface MasterLedgerProps {
   trades: Trade[];
@@ -29,9 +26,6 @@ type SortConfig = {
 export function MasterLedger({ trades, onTradeClick }: MasterLedgerProps) {
   const [expandedTrades, setExpandedTrades] = useState<Record<number, boolean>>({});
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'entryDate', direction: 'desc' });
-  const [isImporting, setIsImporting] = useState(false);
-  const createTrade = useCreateTrade();
-  const { toast } = useToast();
 
   const toggleExpand = (id: number, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -49,73 +43,6 @@ export function MasterLedger({ trades, onTradeClick }: MasterLedgerProps) {
     });
   };
 
-  const handleCsvImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    setIsImporting(true);
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const text = e.target?.result as string;
-      const lines = text.split('\n');
-      if (lines.length < 2) {
-        setIsImporting(false);
-        return;
-      }
-
-      const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-      const data = lines.slice(1);
-
-      // Smart mapping
-      const findHeader = (aliases: string[]) => {
-        return headers.findIndex(h => aliases.includes(h));
-      };
-
-      const tickerIdx = findHeader(['ticker', 'symbol', 'script', 'stock']);
-      const buyPriceIdx = findHeader(['buy price', 'entry', 'avg price', 'buy_price', 'price']);
-      const qtyIdx = findHeader(['quantity', 'qty', 'units', 'vol']);
-      const typeIdx = findHeader(['type', 'segment', 'category']);
-      const sideIdx = findHeader(['side', 'direction', 'buy/sell']);
-      const dateIdx = findHeader(['date', 'time', 'entry date', 'trade date']);
-
-      let importedCount = 0;
-      for (const line of data) {
-        if (!line.trim()) continue;
-        const cols = line.split(',').map(c => c.trim());
-
-        // Basic validation: Must have at least a ticker
-        if (tickerIdx !== -1 && !cols[tickerIdx]) continue;
-
-        const trade = {
-          ticker: tickerIdx !== -1 ? cols[tickerIdx] : 'UNKNOWN',
-          buyPrice: buyPriceIdx !== -1 ? cols[buyPriceIdx].replace(/[^0-9.]/g, '') : '0',
-          quantity: qtyIdx !== -1 ? cols[qtyIdx].replace(/[^0-9.]/g, '') : '0',
-          type: typeIdx !== -1 ? cols[typeIdx].toUpperCase() : 'EQUITY_INTRADAY',
-          side: (sideIdx !== -1 ? (cols[sideIdx].toUpperCase().includes('SELL') || cols[sideIdx].toUpperCase().includes('SHORT') ? 'SHORT' : 'LONG') : 'LONG') as "LONG" | "SHORT",
-          status: 'OPEN' as const,
-          entryDate: dateIdx !== -1 && cols[dateIdx] ? new Date(cols[dateIdx]) : new Date(),
-        };
-
-        try {
-          // Skip invalid rows (e.g., empty rows at end of file)
-          if(trade.ticker === 'UNKNOWN' && trade.buyPrice === '0') continue;
-          
-          await createTrade.mutateAsync(trade);
-          importedCount++;
-        } catch (err) {
-          console.error('Failed to import trade:', err);
-        }
-      }
-
-      toast({
-        title: "Import Complete",
-        description: `Successfully imported ${importedCount} trades.`,
-      });
-      setIsImporting(false);
-      if (event.target) event.target.value = '';
-    };
-    reader.readAsText(file);
-  };
 
   // Group trades by parentTradeId
   const mainTrades = useMemo(() => trades.filter(t => !t.parentTradeId), [trades]);
@@ -177,19 +104,6 @@ export function MasterLedger({ trades, onTradeClick }: MasterLedgerProps) {
       <div className="px-6 py-4 border-b border-border flex items-center justify-between bg-muted/20">
         <h3 className="font-semibold text-lg font-display">Master Ledger</h3>
         <div className="flex items-center gap-3">
-          <div className="relative">
-            <input
-              type="file"
-              accept=".csv"
-              onChange={handleCsvImport}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-              disabled={isImporting}
-            />
-            <Button variant="outline" size="sm" className="gap-2 h-8" disabled={isImporting}>
-              {isImporting ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileUp className="h-3 w-3" />}
-              Import CSV
-            </Button>
-          </div>
           <Badge variant="outline" className="font-mono text-[10px] uppercase">
             Grouped Execution Logs
           </Badge>

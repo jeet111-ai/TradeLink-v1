@@ -347,7 +347,7 @@ export default function MasterLedgerPage() {
       {/* Full Screen Spreadsheet */}
       <div className="flex-1 overflow-hidden">
         <ScrollArea className="h-full w-full">
-          <div className="min-w-[2000px]">
+          <div className="min-w-[2000px]" style={{ ["--actions-col-w" as any]: "96px" }}>
             <Table wrapperClassName="overflow-visible">
               <TableHeader className="sticky top-0 z-30 bg-background">
                 <TableRow className="hover:bg-transparent border-border/50">
@@ -451,7 +451,7 @@ export default function MasterLedgerPage() {
                     className={cn(
                       "text-right font-bold text-xs cursor-pointer hover:text-primary transition-colors select-none",
                       stickyHeaderClass,
-                      "sticky right-24 z-50 bg-background shadow-[-1px_0_0_0_hsl(var(--border))] backdrop-blur-sm"
+                      "sticky right-[var(--actions-col-w)] z-50 bg-background shadow-[-1px_0_0_0_hsl(var(--border))] backdrop-blur-sm"
                     )}
                     onClick={() => handleSort('netProfit')}
                   >
@@ -459,7 +459,7 @@ export default function MasterLedgerPage() {
                   </TableHead>
 
                   {/* Sticky CORNER */}
-                  <TableHead className="text-center font-bold text-xs sticky top-0 right-0 z-50 bg-background shadow-[0_1px_0_0_hsl(var(--border))] backdrop-blur-sm w-24 min-w-[96px]">
+                  <TableHead className="text-center font-bold text-xs sticky top-0 right-0 z-50 bg-background shadow-[0_1px_0_0_hsl(var(--border))] backdrop-blur-sm w-[var(--actions-col-w)] min-w-[var(--actions-col-w)] max-w-[var(--actions-col-w)]">
                     Actions
                   </TableHead>
                 </TableRow>
@@ -573,7 +573,7 @@ export default function MasterLedgerPage() {
                         </Badge>
                       </TableCell>
                       <TableCell className={cn(
-                        "relative text-right font-mono text-xs font-bold sticky right-24 z-50 bg-background shadow-[-1px_0_0_0_hsl(var(--border))] overflow-hidden",
+                        "relative text-right font-mono text-xs font-bold sticky right-[var(--actions-col-w)] z-50 bg-background shadow-[-1px_0_0_0_hsl(var(--border))] overflow-hidden",
                         isProfitable ? 'text-profit bg-profit/10' : isLoss ? 'text-loss bg-loss/10' : ''
                       )}>
                         <span className="absolute inset-0 bg-background" aria-hidden />
@@ -581,8 +581,8 @@ export default function MasterLedgerPage() {
                           {row.netProfit !== null ? `\u20B9${row.netProfit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '-'}
                         </span>
                       </TableCell>
-                      <TableCell className="text-center sticky right-0 z-50 bg-background w-24 min-w-[96px] shadow-[-1px_0_0_0_hsl(var(--border))] backdrop-blur-sm" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-center gap-1">
+                      <TableCell className="text-center sticky right-0 z-50 bg-background w-[var(--actions-col-w)] min-w-[var(--actions-col-w)] max-w-[var(--actions-col-w)] overflow-hidden shadow-[-1px_0_0_0_hsl(var(--border))] backdrop-blur-sm" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-center gap-1 flex-nowrap">
                           {row.trade.chartUrl && (
                             <Button 
                               variant="ghost" 
