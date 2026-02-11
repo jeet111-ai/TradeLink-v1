@@ -46,13 +46,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
   });
 
+  // ⬇️ THIS IS THE FIXED SECTION ⬇️
   const registerMutation = useMutation({
     mutationFn: async (credentials: InsertUser) => {
       const res = await apiRequest("POST", "/api/register", credentials);
       return await res.json();
     },
-    onSuccess: (user: User) => {
-      queryClient.setQueryData(["/api/user"], user);
+    // ✅ FIX: Do NOT set query data. Do NOT log them in.
+    onSuccess: (data: any) => {
+      // Just show the success message from the backend
+      toast({
+        title: "Registration Successful",
+        description: data.message || "Your account is pending admin approval.",
+        variant: "default", // Shows a nice success alert
+      });
     },
     onError: (error: Error) => {
       toast({
@@ -62,6 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
     },
   });
+  // ⬆️ END OF FIX ⬆️
 
   const requestPasswordResetMutation = useMutation({
     mutationFn: async (payload: { email: string }) => {

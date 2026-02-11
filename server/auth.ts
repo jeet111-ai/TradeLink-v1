@@ -9,13 +9,13 @@ import { User } from "@shared/schema";
 
 const scryptAsync = promisify(scrypt);
 
-async function hashPassword(password: string) {
+export async function hashPassword(password: string) {
   const salt = randomBytes(16).toString("hex");
   const buf = (await scryptAsync(password, salt, 64)) as Buffer;
   return `${buf.toString("hex")}.${salt}`;
 }
 
-async function comparePasswords(supplied: string, stored: string) {
+export async function comparePasswords(supplied: string, stored: string) {
   const [hashed, salt] = stored.split(".");
   const hashedBuf = Buffer.from(hashed, "hex");
   const suppliedBuf = (await scryptAsync(supplied, salt, 64)) as Buffer;
@@ -54,9 +54,12 @@ export function setupAuth(app: Express) {
       const user = await storage.getUserByEmail(emailOrUsername);
       if (!user || !(await comparePasswords(password, user.password))) {
         return done(null, false);
-      } else {
-        return done(null, user);
+      } 
+      if (user.isApproved === false) {
+        return done(null, false, { message: "Account pending admin approval." });
       }
+      return done(null, user);
+      
     }),
   );
 
@@ -96,9 +99,12 @@ export function setupAuth(app: Express) {
         password: hashedPassword,
       });
 
-      req.login(user, (err) => {
-        if (err) return next(err);
-        res.status(201).json(user);
+      // req.login(user, (err) => {
+      //   if (err) return next(err);
+      //   res.status(201).json(user);
+      // });
+      res.status(201).json({ 
+        message: "Registration successful! Your account is pending admin approval." 
       });
     } catch (error) {
       console.error("Registration error:", error);
