@@ -11,7 +11,7 @@ export const trades = pgTable("trades", {
   ticker: text("ticker").notNull(),
   entryDate: timestamp("entry_date").notNull().defaultNow(),
   exitDate: timestamp("exit_date"),
-  isApproved: boolean("is_approved").default(false).notNull(),
+  
   // Financial values
   buyPrice: numeric("buy_price").notNull(),
   sellPrice: numeric("sell_price"),
