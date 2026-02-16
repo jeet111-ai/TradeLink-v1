@@ -120,7 +120,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const strategyPnL: Record<string, number> = {};
 
     const equityCurve = sortedTrades.map(t => {
-      const pnl = (Number(t.sellPrice) - Number(t.buyPrice)) * Number(t.quantity) - Number(t.fees || 0);
+      const isShort = t.side === "SHORT";
+      const pnl = isShort
+        ? (Number(t.buyPrice) - Number(t.sellPrice)) * Number(t.quantity) - Number(t.fees || 0)
+        : (Number(t.sellPrice) - Number(t.buyPrice)) * Number(t.quantity) - Number(t.fees || 0);
       cumulativePnL += pnl;
       
       if (pnl > 0) {
@@ -352,7 +355,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const originalQty = soldQty + currentQty;
 
         const totalRealizedPnL = children.reduce((acc, c) => {
-          const pnl = (Number(c.sellPrice) - Number(c.buyPrice)) * Number(c.quantity) - Number(c.fees || 0);
+          const isShort = c.side === "SHORT";
+          const pnl = isShort
+            ? (Number(c.buyPrice) - Number(c.sellPrice)) * Number(c.quantity) - Number(c.fees || 0)
+            : (Number(c.sellPrice) - Number(c.buyPrice)) * Number(c.quantity) - Number(c.fees || 0);
           return acc + pnl;
         }, 0);
 
@@ -363,13 +369,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
             qty: originalQty, 
             price: Number(mainTrade.buyPrice) 
           },
-          ...children.map(c => ({
-            type: 'EXIT',
-            date: (c.exitDate || c.entryDate).toISOString(),
-            qty: Number(c.quantity),
-            price: Number(c.sellPrice),
-            pnl: (Number(c.sellPrice) - Number(c.buyPrice)) * Number(c.quantity) - Number(c.fees || 0)
-          })).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+          ...children.map(c => {
+            const isShort = c.side === "SHORT";
+            const pnl = isShort
+              ? (Number(c.buyPrice) - Number(c.sellPrice)) * Number(c.quantity) - Number(c.fees || 0)
+              : (Number(c.sellPrice) - Number(c.buyPrice)) * Number(c.quantity) - Number(c.fees || 0);
+            return {
+              type: 'EXIT',
+              date: (c.exitDate || c.entryDate).toISOString(),
+              qty: Number(c.quantity),
+              price: Number(c.sellPrice),
+              pnl
+            };
+          }).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
         ];
 
         if (currentQty > 0) {
@@ -429,6 +441,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Create the closed trade record
+      // Full sell: parentTradeId=null so it appears as main row. Partial sell: keep parent ref.
       const closedTrade = await storage.createTrade(
         {
           ...originalTrade,
@@ -438,7 +451,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           exitDate: new Date(exitDate),
           status: "CLOSED",
           fees: (Number(originalTrade.fees || 0) + Number(fees)).toString(),
-          parentTradeId: id,
+          parentTradeId: sellQty === originalQty ? null : id,
         } as any,
         userId,
       );

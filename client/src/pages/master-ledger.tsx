@@ -1,5 +1,5 @@
 import { useTrades } from "@/hooks/use-trades";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Fragment } from "react";
 import { TradeDialog } from "@/components/trade-dialog";
 import { TradeDetails } from "@/components/trade-details";
 import { SearchFilter } from "@/components/search-filter";
@@ -15,7 +15,9 @@ import {
   ExternalLink,
   ArrowUpDown,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  ChevronRight,
+  ChevronDown
 } from "lucide-react";
 import { format, differenceInDays } from "date-fns";
 import {
@@ -56,6 +58,7 @@ export default function MasterLedgerPage() {
   const [manualCmpByTrade, setManualCmpByTrade] = useState<Record<number, number>>({});
 
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'entryDate', direction: 'desc' });
+  const [expandedParents, setExpandedParents] = useState<Record<number, boolean>>({});
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [typeFilter, setTypeFilter] = useState("ALL");
@@ -123,7 +126,10 @@ export default function MasterLedgerPage() {
                           (!dateRange.to || entryDate <= dateRange.to);
       let matchesPnl = true;
       if (pnlFilter !== "ALL" && t.status === 'CLOSED') {
-        const pnl = (Number(t.sellPrice) - Number(t.buyPrice)) * Number(t.quantity) - Number(t.fees || 0);
+        const isShort = t.side === "SHORT";
+        const pnl = isShort
+          ? (Number(t.buyPrice) - Number(t.sellPrice)) * Number(t.quantity) - Number(t.fees || 0)
+          : (Number(t.sellPrice) - Number(t.buyPrice)) * Number(t.quantity) - Number(t.fees || 0);
         if (pnlFilter === "PROFIT") matchesPnl = pnl > 0;
         if (pnlFilter === "LOSS") matchesPnl = pnl < 0;
       }
@@ -149,7 +155,12 @@ export default function MasterLedgerPage() {
       const currentPrice = trade.status === 'OPEN' ? cmpValue : exitPrice;
       const slPercent = stopLoss && entryPrice ? ((entryPrice - stopLoss) / entryPrice) * 100 : null;
       const rpt = stopLoss ? Math.abs((entryPrice - stopLoss) * quantity) : null;
-      const grossPnl = currentPrice ? (currentPrice - entryPrice) * quantity : null;
+      const isShort = trade.side === "SHORT";
+      const grossPnl = currentPrice
+        ? isShort
+          ? (entryPrice - currentPrice) * quantity
+          : (currentPrice - entryPrice) * quantity
+        : null;
       const netProfit = grossPnl !== null ? grossPnl - fees : null;
       const entryValue = entryPrice * quantity;
       const tradeGainPercent = netProfit !== null && entryValue > 0 ? (netProfit / entryValue) * 100 : null;
@@ -192,10 +203,44 @@ export default function MasterLedgerPage() {
     });
   }, [filteredTrades, marketPrices, manualCmpByTrade]);
 
-  const spreadsheetData = useMemo(() => {
-    if (!sortConfig) return initialData;
+  const initialDataByTradeId = useMemo(
+    () => new Map(initialData.map((r) => [r.trade.id, r])),
+    [initialData]
+  );
 
-    return [...initialData].sort((a, b) => {
+  const childTrades = useMemo(
+    () => filteredTrades.filter((t) => t.parentTradeId),
+    [filteredTrades]
+  );
+  const childrenByParentId = useMemo(() => {
+    const map = new Map<number, Trade[]>();
+    for (const c of childTrades) {
+      const pid = c.parentTradeId!;
+      if (!map.has(pid)) map.set(pid, []);
+      map.get(pid)!.push(c);
+    }
+    return map;
+  }, [childTrades]);
+
+  const existingTradeIds = useMemo(
+    () => new Set(filteredTrades.map((t) => t.id)),
+    [filteredTrades]
+  );
+
+  const mainInitialData = useMemo(
+    () =>
+      initialData.filter(
+        (r) =>
+          !r.trade.parentTradeId ||
+          !existingTradeIds.has(r.trade.parentTradeId!) // orphan: parent deleted
+      ),
+    [initialData, existingTradeIds]
+  );
+
+  const spreadsheetData = useMemo(() => {
+    if (!sortConfig) return mainInitialData;
+
+    return [...mainInitialData].sort((a, b) => {
       let aVal: any = a[sortConfig.key as keyof typeof a];
       let bVal: any = b[sortConfig.key as keyof typeof b];
 
@@ -216,7 +261,7 @@ export default function MasterLedgerPage() {
       const comparison = aVal < bVal ? -1 : 1;
       return sortConfig.direction === 'asc' ? comparison : -comparison;
     });
-  }, [initialData, sortConfig]);
+  }, [mainInitialData, sortConfig]);
 
   // 4. Loading Check
   if (isLoading) {
@@ -234,6 +279,11 @@ export default function MasterLedgerPage() {
   const handleTradeClick = (trade: Trade) => {
     setSelectedTrade(trade);
     setIsDetailsOpen(true);
+  };
+
+  const toggleExpand = (parentId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedParents((prev) => ({ ...prev, [parentId]: !prev[parentId] }));
   };
 
   const handleSort = (key: string) => {
@@ -254,13 +304,36 @@ export default function MasterLedgerPage() {
   };
 
   // 6. Calculated Stats
-  const totalTrades = initialData.length;
-  const openTrades = initialData.filter(t => t.status === 'OPEN').length;
-  const closedTrades = initialData.filter(t => t.status === 'CLOSED').length;
+  const totalTrades = mainInitialData.length;
+  const openTrades = mainInitialData.filter((t) => t.status === 'OPEN').length;
+  const closedTrades = mainInitialData.filter((t) => t.status === "CLOSED").length;
   const totalNetPnl = initialData.reduce((sum, t) => sum + (t.netProfit || 0), 0);
-  const winningTrades = initialData.filter(t => t.status === 'CLOSED' && t.netProfit !== null && t.netProfit > 0).length;
+  const winningTrades = mainInitialData.filter(
+    (t) => t.status === "CLOSED" && t.netProfit !== null && t.netProfit > 0
+  ).length;
   const winRate = closedTrades > 0 ? (winningTrades / closedTrades) * 100 : 0;
-  const currentRunningAccountValue = initialData.length > 0 ? initialData[initialData.length - 1].accountValue : 0;
+
+  const realisedGain = initialData
+    .filter((t) => t.status === "CLOSED")
+    .reduce((sum, t) => sum + (t.netProfit || 0), 0);
+  const unrealisedGain = initialData
+    .filter((t) => t.status === "OPEN")
+    .reduce((sum, t) => {
+      const isShort = t.trade.side === "SHORT";
+      const gross =
+        t.cmp !== null
+          ? isShort
+            ? (t.entry - t.cmp) * t.qty
+            : (t.cmp - t.entry) * t.qty
+          : 0;
+      return sum + (gross - t.brokerage);
+    }, 0);
+  const exposure = initialData
+    .filter((t) => t.status === "OPEN")
+    .reduce((sum, t) => sum + t.entry * t.qty, 0);
+  const openMarketRisk = initialData
+    .filter((t) => t.status === "OPEN")
+    .reduce((sum, t) => sum + (t.rpt || 0), 0);
 
   const stickyHeaderClass = "sticky top-0 z-20 bg-background shadow-[0_1px_0_0_hsl(var(--border))]";
 
@@ -285,25 +358,27 @@ export default function MasterLedgerPage() {
           </div>
         </div>
         
-        {/* Quick Stats */}
+        {/* Header: 4 Financial Metrics Only */}
         <div className="hidden md:flex items-center gap-6 text-sm">
           <div className="text-center">
-            <div className="text-muted-foreground text-xs">Total</div>
-            <div className="font-bold font-mono">{totalTrades}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-muted-foreground text-xs">Open</div>
-            <div className="font-bold font-mono text-primary">{openTrades}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-muted-foreground text-xs">Win Rate</div>
-            <div className="font-bold font-mono">{winRate.toFixed(1)}%</div>
-          </div>
-          <div className="text-center">
-            <div className="text-muted-foreground text-xs">Net P&L</div>
-            <div className={cn("font-bold font-mono", totalNetPnl >= 0 ? "text-profit" : "text-loss")}>
-              ₹{totalNetPnl.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            <div className="text-muted-foreground text-xs">Realised</div>
+            <div className={cn("font-bold font-mono", realisedGain >= 0 ? "text-profit" : "text-loss")}>
+              ₹{realisedGain.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </div>
+          </div>
+          <div className="text-center">
+            <div className="text-muted-foreground text-xs">Unrealised</div>
+            <div className={cn("font-bold font-mono", unrealisedGain >= 0 ? "text-profit" : "text-loss")}>
+              ₹{unrealisedGain.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            </div>
+          </div>
+          <div className="text-center">
+            <div className="text-muted-foreground text-xs">Exposure</div>
+            <div className="font-bold font-mono">₹{exposure.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</div>
+          </div>
+          <div className="text-center">
+            <div className="text-muted-foreground text-xs">Risk</div>
+            <div className="font-bold font-mono">₹{openMarketRisk.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</div>
           </div>
         </div>
 
@@ -476,150 +551,310 @@ export default function MasterLedgerPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {spreadsheetData.map((row) => {
-                  const isProfitable = row.netProfit !== null && row.netProfit > 0;
-                  const isLoss = row.netProfit !== null && row.netProfit < 0;
-                  const isOpen = row.status === 'OPEN';
-                  const hasLivePrice =
-                    marketPrices[row.stock]?.price !== undefined &&
-                    marketPrices[row.stock]?.price !== null;
-                  
+                {spreadsheetData.map((mainRow, mainIndex) => {
+                  const children = childrenByParentId.get(mainRow.trade.id) ?? [];
+                  const hasChildren = children.length > 0;
+                  const isExpanded = expandedParents[mainRow.trade.id];
+                  const parentNo = mainIndex + 1;
                   return (
-                    <TableRow 
-                      key={row.trade.id} 
-                      className={cn(
-                        "relative hover:bg-muted/50 border-border/50 cursor-pointer transition-colors",
-                        isOpen && "bg-primary/5"
-                      )}
-                      onClick={() => handleTradeClick(row.trade)}
-                      data-testid={`row-trade-${row.trade.id}`}
-                    >
-                      <TableCell className="text-center font-mono text-xs text-muted-foreground sticky left-0 z-30 bg-background shadow-[1px_0_0_0_hsl(var(--border))] w-12 min-w-[48px]">
-                        {row.no}
-                      </TableCell>
-                      <TableCell className="font-mono font-bold text-primary sticky left-12 z-30 bg-background shadow-[1px_0_0_0_hsl(var(--border))] w-32 min-w-[128px]">
-                        {row.stock}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">{row.entryDate}</TableCell>
-                      <TableCell className="text-right font-mono text-xs">{row.qty}</TableCell>
-                      <TableCell className="text-right font-mono text-xs">₹{row.entry.toLocaleString('en-IN')}</TableCell>
-                      <TableCell className="text-right font-mono text-xs text-loss">
-                        {row.sl ? `₹${row.sl.toLocaleString('en-IN')}` : '-'}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs text-loss">
-                        {row.slPercent !== null ? `${row.slPercent.toFixed(2)}%` : '-'}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs">
-                        {row.rpt !== null ? `₹${row.rpt.toLocaleString('en-IN', { minimumFractionDigits: 0 })}` : '-'}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">{row.exitDate}</TableCell>
-                      <TableCell className="text-right font-mono text-xs">
-                        {row.exitQty !== null ? row.exitQty : '-'}
-                      </TableCell>
-
-                      {/* SPLIT CELL 1: Exit Price (Shows only if closed) */}
-                      <TableCell className="text-right font-mono text-xs">
-                        {row.exitPrice !== null ? `₹${row.exitPrice.toLocaleString('en-IN')}` : '-'}
-                      </TableCell>
-
-                      {/* SPLIT CELL 2: CMP (Shows only if open) */}
-                      <TableCell className="text-right font-mono text-xs">
-                        {isOpen && hasLivePrice ? (
-                          <div className="flex items-center justify-end gap-1">
-                            <span className="text-primary font-bold">{"\u20B9"}{row.cmp!.toLocaleString('en-IN')}</span>
-                            {row.cmp! > row.entry ? (
-                              <TrendingUp className="h-3 w-3 text-profit" />
-                            ) : (
-                              <TrendingDown className="h-3 w-3 text-loss" />
-                            )}
-                          </div>
-                        ) : isOpen ? (
-                          <input
-                            type="number"
-                            inputMode="decimal"
-                            placeholder="Add CMP"
-                            className="w-24 rounded border border-border bg-background px-2 py-1 text-right text-xs font-mono"
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={(e) => {
-                              const value = e.target.value;
-                              setManualCmpByTrade((prev) => {
-                                if (!value) {
-                                  const { [row.trade.id]: _, ...rest } = prev;
-                                  return rest;
-                                }
-                                return { ...prev, [row.trade.id]: Number(value) };
-                              });
-                            }}
-                            value={manualCmpByTrade[row.trade.id] ?? ""}
-                          />
-                        ) : (
-                          <span className="text-muted-foreground">-</span>
+                    <Fragment key={mainRow.trade.id}>
+                      <TableRow
+                        className={cn(
+                          "relative hover:bg-muted/50 border-border/50 cursor-pointer transition-colors",
+                          mainRow.status === "OPEN" && "bg-primary/5"
                         )}
-                      </TableCell>
-                      
-                      <TableCell className={cn("text-right font-mono text-xs font-medium", isProfitable ? 'text-profit' : isLoss ? 'text-loss' : '')}>
-                        {row.tradeGainPercent !== null ? `${row.tradeGainPercent.toFixed(2)}%` : '-'}
-                      </TableCell>
-                      <TableCell className={cn("text-right font-mono text-xs font-medium", isProfitable ? 'text-profit' : isLoss ? 'text-loss' : '')}>
-                        {row.rMultiple !== null ? `${row.rMultiple.toFixed(2)}R` : '-'}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs">
-                        {row.holdingDays !== null ? row.holdingDays : '-'}
-                      </TableCell>
-                      <TableCell className={cn("text-right font-mono text-xs font-medium", isProfitable ? 'text-profit' : isLoss ? 'text-loss' : '')}>
-                        {row.grossProfit !== null ? `\u20B9${row.grossProfit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '-'}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs text-muted-foreground">
-                        {"\u20B9"}{row.brokerage.toLocaleString('en-IN')}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs">
-                        {"\u20B9"}{row.accountValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground max-w-[180px] truncate">
-                        {row.notes}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-[10px] uppercase">
-                          {row.strategy}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className={cn(
-                        "relative text-right font-mono text-xs font-bold sticky right-[var(--actions-col-w)] z-50 bg-background shadow-[-1px_0_0_0_hsl(var(--border))] overflow-hidden",
-                        isProfitable ? 'text-profit bg-profit/10' : isLoss ? 'text-loss bg-loss/10' : ''
-                      )}>
-                        <span className="absolute inset-0 bg-background" aria-hidden />
-                        <span className="relative z-10">
-                          {row.netProfit !== null ? `\u20B9${row.netProfit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '-'}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-center sticky right-0 z-50 bg-background w-[var(--actions-col-w)] min-w-[var(--actions-col-w)] max-w-[var(--actions-col-w)] overflow-hidden shadow-[-1px_0_0_0_hsl(var(--border))] backdrop-blur-sm" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-center gap-1 flex-nowrap">
-                          {row.trade.chartUrl && (
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              className="h-6 w-6 text-primary"
-                              onClick={() => window.open(row.trade.chartUrl!, '_blank')}
-                              data-testid={`button-chart-${row.trade.id}`}
-                            >
-                              <ImageIcon className="h-3 w-3" />
-                            </Button>
+                        onClick={() => handleTradeClick(mainRow.trade)}
+                        data-testid={`row-trade-${mainRow.trade.id}`}
+                      >
+                        <TableCell className="text-center font-mono text-xs text-muted-foreground sticky left-0 z-30 bg-background shadow-[1px_0_0_0_hsl(var(--border))] w-12 min-w-[48px]">
+                          <div className="flex items-center justify-center gap-0.5">
+                            {hasChildren && (
+                              <span
+                                onClick={(e) => toggleExpand(mainRow.trade.id, e)}
+                                className="cursor-pointer hover:text-primary"
+                                role="button"
+                                aria-label={isExpanded ? "Collapse" : "Expand"}
+                              >
+                                {isExpanded ? (
+                                  <ChevronDown className="h-3.5 w-3.5" />
+                                ) : (
+                                  <ChevronRight className="h-3.5 w-3.5" />
+                                )}
+                              </span>
+                            )}
+                            <span>{parentNo}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="font-mono font-bold text-primary sticky left-12 z-30 bg-background shadow-[1px_0_0_0_hsl(var(--border))] w-32 min-w-[128px]">
+                          {mainRow.stock}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{mainRow.entryDate}</TableCell>
+                        <TableCell className="text-right font-mono text-xs">{mainRow.qty}</TableCell>
+                        <TableCell className="text-right font-mono text-xs">₹{mainRow.entry.toLocaleString('en-IN')}</TableCell>
+                        <TableCell className="text-right font-mono text-xs text-loss">
+                          {mainRow.sl ? `₹${mainRow.sl.toLocaleString('en-IN')}` : '-'}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs text-loss">
+                          {mainRow.slPercent !== null ? `${mainRow.slPercent.toFixed(2)}%` : '-'}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs">
+                          {mainRow.rpt !== null ? `₹${mainRow.rpt.toLocaleString('en-IN', { minimumFractionDigits: 0 })}` : '-'}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{mainRow.exitDate}</TableCell>
+                        <TableCell className="text-right font-mono text-xs">
+                          {mainRow.exitQty !== null ? mainRow.exitQty : '-'}
+                        </TableCell>
+
+                        {/* SPLIT CELL 1: Exit Price */}
+                        <TableCell className="text-right font-mono text-xs">
+                          {mainRow.exitPrice !== null ? `₹${mainRow.exitPrice.toLocaleString('en-IN')}` : '-'}
+                        </TableCell>
+
+                        {/* SPLIT CELL 2: CMP */}
+                        <TableCell className="text-right font-mono text-xs">
+                          {mainRow.status === 'OPEN' && mainRow.cmp !== null ? (
+                            <div className="flex items-center justify-end gap-1">
+                              <span className="text-primary font-bold">{"\u20B9"}{mainRow.cmp.toLocaleString('en-IN')}</span>
+                              {(mainRow.trade.side === "SHORT"
+                                ? mainRow.entry - mainRow.cmp
+                                : mainRow.cmp - mainRow.entry) >= 0 ? (
+                                <TrendingUp className="h-3 w-3 text-profit" />
+                              ) : (
+                                <TrendingDown className="h-3 w-3 text-loss" />
+                              )}
+                            </div>
+                          ) : mainRow.status === 'OPEN' ? (
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              placeholder="Add CMP"
+                              className="w-24 rounded border border-border bg-background px-2 py-1 text-right text-xs font-mono"
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                setManualCmpByTrade((prev) => {
+                                  if (!value) {
+                                    const { [mainRow.trade.id]: _, ...rest } = prev;
+                                    return rest;
+                                  }
+                                  return { ...prev, [mainRow.trade.id]: Number(value) };
+                                });
+                              }}
+                              value={manualCmpByTrade[mainRow.trade.id] ?? ""}
+                            />
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
                           )}
-                          {isOpen && (
-                            <TradeDialog initialData={row.trade} mode="close">
-                              <Button size="sm" variant="outline" className="h-6 text-[10px] px-2" data-testid={`button-exit-${row.trade.id}`}>
-                                Exit
+                        </TableCell>
+
+                        <TableCell className={cn("text-right font-mono text-xs font-medium", (mainRow.netProfit !== null && mainRow.netProfit > 0) ? 'text-profit' : (mainRow.netProfit !== null && mainRow.netProfit < 0) ? 'text-loss' : '')}>
+                          {mainRow.tradeGainPercent !== null ? `${mainRow.tradeGainPercent.toFixed(2)}%` : '-'}
+                        </TableCell>
+                        <TableCell className={cn("text-right font-mono text-xs font-medium", (mainRow.netProfit !== null && mainRow.netProfit > 0) ? 'text-profit' : (mainRow.netProfit !== null && mainRow.netProfit < 0) ? 'text-loss' : '')}>
+                          {mainRow.rMultiple !== null ? `${mainRow.rMultiple.toFixed(2)}R` : '-'}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs">
+                          {mainRow.holdingDays !== null ? mainRow.holdingDays : '-'}
+                        </TableCell>
+                        <TableCell className={cn("text-right font-mono text-xs font-medium", (mainRow.netProfit !== null && mainRow.netProfit > 0) ? 'text-profit' : (mainRow.netProfit !== null && mainRow.netProfit < 0) ? 'text-loss' : '')}>
+                          {mainRow.grossProfit !== null ? `\u20B9${mainRow.grossProfit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '-'}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                          {"\u20B9"}{mainRow.brokerage.toLocaleString('en-IN')}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs">
+                          {"\u20B9"}{mainRow.accountValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground max-w-[180px] truncate">
+                          {mainRow.notes}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-[10px] uppercase">
+                            {mainRow.strategy}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className={cn(
+                          "relative text-right font-mono text-xs font-bold sticky right-[var(--actions-col-w)] z-50 bg-background shadow-[-1px_0_0_0_hsl(var(--border))] overflow-hidden",
+                          (mainRow.netProfit !== null && mainRow.netProfit > 0) ? 'text-profit bg-profit/10' : (mainRow.netProfit !== null && mainRow.netProfit < 0) ? 'text-loss bg-loss/10' : ''
+                        )}>
+                          <span className="absolute inset-0 bg-background" aria-hidden />
+                          <span className="relative z-10">
+                            {mainRow.netProfit !== null ? `\u20B9${mainRow.netProfit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '-'}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-center sticky right-0 z-50 bg-background w-[var(--actions-col-w)] min-w-[var(--actions-col-w)] max-w-[var(--actions-col-w)] overflow-hidden shadow-[-1px_0_0_0_hsl(var(--border))] backdrop-blur-sm" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-center gap-1 flex-nowrap">
+                            {mainRow.trade.chartUrl && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6 text-primary"
+                                onClick={() => window.open(mainRow.trade.chartUrl!, '_blank')}
+                                data-testid={`button-chart-${mainRow.trade.id}`}
+                              >
+                                <ImageIcon className="h-3 w-3" />
+                              </Button>
+                            )}
+                            {mainRow.status === 'OPEN' && (
+                              <TradeDialog initialData={mainRow.trade} mode="close">
+                                <Button size="sm" variant="outline" className="h-6 text-[10px] px-2" data-testid={`button-exit-${mainRow.trade.id}`}>
+                                  Exit
+                                </Button>
+                              </TradeDialog>
+                            )}
+                            <TradeDialog initialData={mainRow.trade}>
+                              <Button variant="ghost" size="icon" className="h-6 w-6" data-testid={`button-edit-${mainRow.trade.id}`}>
+                                <ExternalLink className="h-3 w-3" />
                               </Button>
                             </TradeDialog>
-                          )}
-                          <TradeDialog initialData={row.trade}>
-                            <Button variant="ghost" size="icon" className="h-6 w-6" data-testid={`button-edit-${row.trade.id}`}>
-                              <ExternalLink className="h-3 w-3" />
-                            </Button>
-                          </TradeDialog>
-                        </div>
-                      </TableCell>
-                    </TableRow>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+
+                      {/* Child rows (same columns as main) */}
+                      {isExpanded &&
+                        children.map((childTrade, childIndex) => {
+                          const row = initialDataByTradeId.get(childTrade.id);
+                          if (!row) return null;
+                          const isProfitable = row.netProfit !== null && row.netProfit > 0;
+                          const isLoss = row.netProfit !== null && row.netProfit < 0;
+                          const isOpen = row.status === "OPEN";
+                          return (
+                            <TableRow
+                              key={childTrade.id}
+                              className={cn(
+                                "relative hover:bg-muted/50 border-border/50 cursor-pointer transition-colors bg-muted/10",
+                                isOpen && "bg-primary/5"
+                              )}
+                              onClick={() => handleTradeClick(row.trade)}
+                              data-testid={`row-trade-${row.trade.id}`}
+                            >
+                              <TableCell className="text-center font-mono text-xs text-muted-foreground sticky left-0 z-30 bg-background shadow-[1px_0_0_0_hsl(var(--border))] w-12 min-w-[48px]">
+                                {parentNo}.{childIndex + 1}
+                              </TableCell>
+                              <TableCell className="font-mono font-bold text-primary sticky left-12 z-30 bg-background shadow-[1px_0_0_0_hsl(var(--border))] w-32 min-w-[128px] pl-8">
+                                └ {row.stock}
+                              </TableCell>
+                              <TableCell className="font-mono text-xs">{row.entryDate}</TableCell>
+                              <TableCell className="text-right font-mono text-xs">{row.qty}</TableCell>
+                              <TableCell className="text-right font-mono text-xs">₹{row.entry.toLocaleString("en-IN")}</TableCell>
+                              <TableCell className="text-right font-mono text-xs text-loss">
+                                {row.sl ? `₹${row.sl.toLocaleString("en-IN")}` : "-"}
+                              </TableCell>
+                              <TableCell className="text-right font-mono text-xs text-loss">
+                                {row.slPercent !== null ? `${row.slPercent.toFixed(2)}%` : "-"}
+                              </TableCell>
+                              <TableCell className="text-right font-mono text-xs">
+                                {row.rpt !== null ? `₹${row.rpt.toLocaleString("en-IN", { minimumFractionDigits: 0 })}` : "-"}
+                              </TableCell>
+                              <TableCell className="font-mono text-xs">{row.exitDate}</TableCell>
+                              <TableCell className="text-right font-mono text-xs">
+                                {row.exitQty !== null ? row.exitQty : "-"}
+                              </TableCell>
+                              <TableCell className="text-right font-mono text-xs">
+                                {row.exitPrice !== null ? `₹${row.exitPrice.toLocaleString("en-IN")}` : "-"}
+                              </TableCell>
+                              <TableCell className="text-right font-mono text-xs">
+                                {isOpen && row.cmp !== null ? (
+                                  <div className="flex items-center justify-end gap-1">
+                                    <span className="text-primary font-bold">{"\u20B9"}{row.cmp.toLocaleString("en-IN")}</span>
+                                    {(row.trade.side === "SHORT"
+                                      ? row.entry - row.cmp
+                                      : row.cmp - row.entry) >= 0 ? (
+                                      <TrendingUp className="h-3 w-3 text-profit" />
+                                    ) : (
+                                      <TrendingDown className="h-3 w-3 text-loss" />
+                                    )}
+                                  </div>
+                                ) : isOpen ? (
+                                  <input
+                                    type="number"
+                                    inputMode="decimal"
+                                    placeholder="Add CMP"
+                                    className="w-24 rounded border border-border bg-background px-2 py-1 text-right text-xs font-mono"
+                                    onClick={(e) => e.stopPropagation()}
+                                    onChange={(e) => {
+                                      const value = e.target.value;
+                                      setManualCmpByTrade((prev) => {
+                                        if (!value) {
+                                          const { [row.trade.id]: _, ...rest } = prev;
+                                          return rest;
+                                        }
+                                        return { ...prev, [row.trade.id]: Number(value) };
+                                      });
+                                    }}
+                                    value={manualCmpByTrade[row.trade.id] ?? ""}
+                                  />
+                                ) : (
+                                  <span className="text-muted-foreground">-</span>
+                                )}
+                              </TableCell>
+                              <TableCell className={cn("text-right font-mono text-xs font-medium", isProfitable ? "text-profit" : isLoss ? "text-loss" : "")}>
+                                {row.tradeGainPercent !== null ? `${row.tradeGainPercent.toFixed(2)}%` : "-"}
+                              </TableCell>
+                              <TableCell className={cn("text-right font-mono text-xs font-medium", isProfitable ? "text-profit" : isLoss ? "text-loss" : "")}>
+                                {row.rMultiple !== null ? `${row.rMultiple.toFixed(2)}R` : "-"}
+                              </TableCell>
+                              <TableCell className="text-right font-mono text-xs">
+                                {row.holdingDays !== null ? row.holdingDays : "-"}
+                              </TableCell>
+                              <TableCell className={cn("text-right font-mono text-xs font-medium", isProfitable ? "text-profit" : isLoss ? "text-loss" : "")}>
+                                {row.grossProfit !== null ? `\u20B9${row.grossProfit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "-"}
+                              </TableCell>
+                              <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                                {"\u20B9"}{row.brokerage.toLocaleString("en-IN")}
+                              </TableCell>
+                              <TableCell className="text-right font-mono text-xs">
+                                {"\u20B9"}{row.accountValue.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                              </TableCell>
+                              <TableCell className="text-xs text-muted-foreground max-w-[180px] truncate">
+                                {row.notes}
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant="outline" className="text-[10px] uppercase">
+                                  {row.strategy}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className={cn(
+                                "relative text-right font-mono text-xs font-bold sticky right-[var(--actions-col-w)] z-50 bg-background shadow-[-1px_0_0_0_hsl(var(--border))] overflow-hidden",
+                                isProfitable ? "text-profit bg-profit/10" : isLoss ? "text-loss bg-loss/10" : ""
+                              )}>
+                                <span className="absolute inset-0 bg-background" aria-hidden />
+                                <span className="relative z-10">
+                                  {row.netProfit !== null ? `\u20B9${row.netProfit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "-"}
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-center sticky right-0 z-50 bg-background w-[var(--actions-col-w)] min-w-[var(--actions-col-w)] max-w-[var(--actions-col-w)] overflow-hidden shadow-[-1px_0_0_0_hsl(var(--border))] backdrop-blur-sm" onClick={(e) => e.stopPropagation()}>
+                                <div className="flex items-center justify-center gap-1 flex-nowrap">
+                                  {row.trade.chartUrl && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-6 w-6 text-primary"
+                                      onClick={() => window.open(row.trade.chartUrl!, "_blank")}
+                                      data-testid={`button-chart-${row.trade.id}`}
+                                    >
+                                      <ImageIcon className="h-3 w-3" />
+                                    </Button>
+                                  )}
+                                  {isOpen && (
+                                    <TradeDialog initialData={row.trade} mode="close">
+                                      <Button size="sm" variant="outline" className="h-6 text-[10px] px-2" data-testid={`button-exit-${row.trade.id}`}>
+                                        Exit
+                                      </Button>
+                                    </TradeDialog>
+                                  )}
+                                  <TradeDialog initialData={row.trade}>
+                                    <Button variant="ghost" size="icon" className="h-6 w-6" data-testid={`button-edit-${row.trade.id}`}>
+                                      <ExternalLink className="h-3 w-3" />
+                                    </Button>
+                                  </TradeDialog>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                    </Fragment>
                   );
                 })}
                 {spreadsheetData.length === 0 && (
@@ -636,7 +871,7 @@ export default function MasterLedgerPage() {
         </ScrollArea>
       </div>
 
-      {/* Footer Stats Bar */}
+      {/* Footer: 5 Summary Metrics */}
       <footer className="flex items-center justify-between px-4 py-2 border-t border-border bg-card/50 backdrop-blur-sm text-xs">
         <div className="flex items-center gap-4">
           <span className="text-muted-foreground">
@@ -644,6 +879,14 @@ export default function MasterLedgerPage() {
           </span>
         </div>
         <div className="flex items-center gap-6">
+          <div>
+            <span className="text-muted-foreground mr-2">Total:</span>
+            <span className="font-mono font-bold">{totalTrades}</span>
+          </div>
+          <div>
+            <span className="text-muted-foreground mr-2">Open:</span>
+            <span className="font-mono font-bold text-primary">{openTrades}</span>
+          </div>
           <div>
             <span className="text-muted-foreground mr-2">Closed:</span>
             <span className="font-mono font-bold">{closedTrades}</span>
@@ -653,9 +896,9 @@ export default function MasterLedgerPage() {
             <span className="font-mono font-bold">{winRate.toFixed(1)}%</span>
           </div>
           <div>
-            <span className="text-muted-foreground mr-2">Account Value:</span>
-            <span className={cn("font-mono font-bold", currentRunningAccountValue >= 0 ? "text-profit" : "text-loss")}>
-              ₹{currentRunningAccountValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            <span className="text-muted-foreground mr-2">Net P&L:</span>
+            <span className={cn("font-mono font-bold", totalNetPnl >= 0 ? "text-profit" : "text-loss")}>
+              ₹{totalNetPnl.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </span>
           </div>
         </div>
